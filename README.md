@@ -4,6 +4,10 @@ A lightweight AI-assisted advisor that helps Platform Engineering and Site Relia
 
 The application accepts a finding, classifies it across common platform-security domains, assigns a severity, recommends a remediation path, and identifies the responsible platform team. It is advisory only: it does not modify infrastructure, deploy changes, or make access-control decisions.
 
+## Live Deployment
+
+Run the advisor in Hugging Face Spaces: [platform-eng-agent-advisor](https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor).
+
 ## Business Need
 
 Modern engineering organizations operate across cloud infrastructure, Kubernetes, CI/CD systems, identity platforms, and data services. This scale creates a continuous stream of security findings, many of which are difficult to prioritize and route correctly.
