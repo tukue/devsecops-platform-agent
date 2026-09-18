@@ -1,0 +1,7 @@
+transformers
+torch
+gradio
+pandas
+scikit-learn
+huggingface_hub
+spaces
