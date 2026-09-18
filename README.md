@@ -7,7 +7,7 @@ sdk: gradio
 python_version: "3.10"
 app_file: app.py
 fullWidth: true
-short_description: AI-assisted infrastructure security triage for platform and SRE teams.
+short_description: AI security triage for Platform Engineering and SRE teams.
 ---
 
 # Platform Engineering DevSecOps Advisor
