@@ -1,3 +1,15 @@
+---
+title: Platform Engineering DevSecOps Advisor
+emoji: 🛡️
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+python_version: "3.10"
+app_file: app.py
+fullWidth: true
+short_description: AI-assisted infrastructure security triage for platform and SRE teams.
+---
+
 # Platform Engineering DevSecOps Advisor
 
 A lightweight AI-assisted advisor that helps Platform Engineering and Site Reliability Engineering (SRE) teams turn infrastructure security findings into consistent, actionable remediation guidance.
