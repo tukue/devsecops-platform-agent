@@ -1,0 +1,33 @@
+name: Sync Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Hugging Face CLI
+        run: |
+          curl -LsSf https://hf.co/cli/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Sync Space
+        env:
+          HF_OIDC_RESOURCE: spaces/Tukue/platform-eng-agent-advisor
+        run: |
+          hf upload Tukue/platform-eng-agent-advisor . . \
+            --repo-type space \
+            --exclude ".git/**" \
+            --exclude ".github/**" \
+            --commit-message "Sync from GitHub ${GITHUB_SHA::7}"
