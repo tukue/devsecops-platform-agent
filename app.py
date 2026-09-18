@@ -13,6 +13,14 @@ CATEGORY_NAMES = {
     "data protection": "Data",
 }
 
+CATEGORY_RULES = [
+    ("IAM", ["iam role", "wildcard permission", "action: *", "resource: *", "mfa", "identity"]),
+    ("Network", ["security group", "0.0.0.0/0", "ingress", "egress", "network policy", "cidr"]),
+    ("Container", ["kubernetes", "container", "image", "runs as root", "privileged"]),
+    ("Secrets", ["secret committed", "private key", "hardcoded password", "hardcoded secret", "credential"]),
+    ("Data", ["storage bucket", "customer records", "encryption", "unencrypted", "backup"]),
+]
+
 SEVERITY_RULES = [
     ("critical", ["publicly accessible", "0.0.0.0/0", "action: *", "resource: *", "admin access", "root user", "secret committed", "private key committed"]),
     ("high", ["privileged container", "runs as root", "unencrypted", "no encryption", "wildcard permission", "hardcoded password", "hardcoded secret"]),
@@ -42,14 +50,26 @@ def determine_severity(finding):
             return severity
     return "low"
 
+
+def determine_category(finding):
+    normalized = finding.lower()
+    for category, signals in CATEGORY_RULES:
+        if any(signal in normalized for signal in signals):
+            return category
+    return None
+
 def analyze_finding(finding, confidence_threshold=0.60):
     if not finding or not finding.strip():
         raise ValueError("A security finding is required.")
 
-    classifier = pipeline("zero-shot-classification", model=MODEL_NAME) # Classifier needs to be initialized here or passed in
-    prediction = classifier(finding, CATEGORIES, multi_label=False)
-    category = CATEGORY_NAMES[prediction["labels"][0]]
-    confidence = float(prediction["scores"][0])
+    category = determine_category(finding)
+    if category:
+        confidence = 1.0
+    else:
+        classifier = pipeline("zero-shot-classification", model=MODEL_NAME)
+        prediction = classifier(finding, CATEGORIES, multi_label=False)
+        category = CATEGORY_NAMES[prediction["labels"][0]]
+        confidence = float(prediction["scores"][0])
     severity = determine_severity(finding)
 
     return {
