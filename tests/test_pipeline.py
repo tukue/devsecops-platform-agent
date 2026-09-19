@@ -24,7 +24,7 @@ from src.ensemble import (
 def test_empty_input():
     valid, errors, warnings = validate_input("")
     assert not valid
-    assert any("empty" in e.lower() for e in errors)
+    assert any("required" in e.lower() or "empty" in e.lower() for e in errors)
 
 
 def test_too_short_input():

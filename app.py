@@ -1,5 +1,6 @@
 import spaces
 import gradio as gr
+import threading
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
 from src.memory import ConversationMemory
@@ -20,6 +21,7 @@ classifier = EnsembleClassifier(confidence_threshold=0.55)
 memory = ConversationMemory(max_sessions=10)
 
 SESSION_COUNTER = 0
+SESSION_LOCK = threading.Lock()
 
 
 def analyze_finding(finding, session_id=None):
@@ -37,8 +39,10 @@ def analyze_finding(finding, session_id=None):
             return {"error": errors[0]}
 
     if session_id is None:
-        SESSION_COUNTER += 1
-        session_id = f"session_{SESSION_COUNTER}"
+        with SESSION_LOCK:
+            global SESSION_COUNTER
+            SESSION_COUNTER += 1
+            session_id = f"session_{SESSION_COUNTER}"
         record_session(session_id)
 
     with PerformanceTimer("classification", trace_id):
@@ -252,4 +256,4 @@ with gr.Blocks(title="AI DevSecOps Advisor") as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="127.0.0.1", server_port=7860)

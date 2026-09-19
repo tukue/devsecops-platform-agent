@@ -1,5 +1,6 @@
 from transformers import pipeline
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -97,17 +98,20 @@ class EnsembleClassifier:
     def __init__(self, confidence_threshold=0.55):
         self.confidence_threshold = confidence_threshold
         self._models = {}
+        self._model_lock = threading.Lock()
 
     def _get_model(self, model_name):
         if model_name not in self._models:
-            try:
-                self._models[model_name] = pipeline(
-                    "zero-shot-classification",
-                    model=model_name,
-                )
-            except Exception as e:
-                logger.warning("Failed to load model %s: %s", model_name, e)
-                return None
+            with self._model_lock:
+                if model_name not in self._models:
+                    try:
+                        self._models[model_name] = pipeline(
+                            "zero-shot-classification",
+                            model=model_name,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to load model %s: %s", model_name, e)
+                        return None
         return self._models[model_name]
 
     def classify_with_model(self, finding, model_name):

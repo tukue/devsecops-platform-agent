@@ -1,6 +1,7 @@
 import re
 import hashlib
 import time
+import threading
 from collections import defaultdict
 
 MAX_INPUT_LENGTH = 2000
@@ -8,6 +9,7 @@ MIN_INPUT_LENGTH = 10
 MAX_REQUESTS_PER_MINUTE = 30
 
 _request_log = defaultdict(list)
+_rate_limit_lock = threading.Lock()
 
 # ──────────────────────────────────────────────
 # Layer 1: Prompt Injection Detection
@@ -132,20 +134,19 @@ SECURITY_KEYWORDS = [
 def _rate_limit(client_id="default"):
     now = time.time()
     window = 60
-    _request_log[client_id] = [
-        t for t in _request_log[client_id] if now - t < window
-    ]
-    if len(_request_log[client_id]) >= MAX_REQUESTS_PER_MINUTE:
-        return False
-    _request_log[client_id].append(now)
-    return True
+    with _rate_limit_lock:
+        _request_log[client_id] = [
+            t for t in _request_log[client_id] if now - t < window
+        ]
+        if len(_request_log[client_id]) >= MAX_REQUESTS_PER_MINUTE:
+            return False
+        _request_log[client_id].append(now)
+        return True
 
 
 def _detect_injection_layers(finding):
     layers_triggered = []
     normalized = finding.strip()
-
-    encoded = hashlib.sha256(normalized.encode()).hexdigest()
 
     for pattern in ALL_INJECTION_PATTERNS:
         if re.search(pattern, normalized, re.IGNORECASE):
