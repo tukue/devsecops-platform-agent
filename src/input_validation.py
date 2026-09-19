@@ -187,7 +187,7 @@ def validate_input(finding, client_id="default"):
     warnings = []
 
     if not finding or not finding.strip():
-        return False, ["Input cannot be empty."], []
+        return False, ["A security finding is required."], []
 
     finding = finding.strip()
 

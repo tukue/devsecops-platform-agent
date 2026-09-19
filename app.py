@@ -34,7 +34,7 @@ def analyze_finding(finding, session_id=None):
         if not valid:
             record_validation_block(errors[0] if errors else "unknown")
             record_error("validation", errors[0])
-            return {"error": errors[0], "validation_errors": errors, "trace_id": trace_id}
+            return {"error": errors[0]}
 
     if session_id is None:
         SESSION_COUNTER += 1
