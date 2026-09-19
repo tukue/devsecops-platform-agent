@@ -1,0 +1,202 @@
+[
+  {
+    "id": "IAM-001",
+    "category": "IAM",
+    "title": "Wildcard permissions on IAM role",
+    "finding": "An IAM role grants wildcard permissions to all AWS resources.",
+    "severity": "critical",
+    "remediation": "Apply least privilege principle. Replace wildcard permissions with specific actions and resources required for the workload. Use IAM Access Analyzer to identify unused permissions.",
+    "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"],
+    "keywords": ["iam", "wildcard", "permission", "role", "aws", "least privilege"]
+  },
+  {
+    "id": "IAM-002",
+    "category": "IAM",
+    "title": "Missing MFA on privileged accounts",
+    "finding": "Administrative accounts do not require multi-factor authentication.",
+    "severity": "high",
+    "remediation": "Enable MFA for all privileged accounts. Use hardware tokens for root accounts. Enforce MFA through IAM policies.",
+    "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html"],
+    "keywords": ["mfa", "multi-factor", "authentication", "privileged", "admin", "root"]
+  },
+  {
+    "id": "IAM-003",
+    "category": "IAM",
+    "title": "Overly permissive trust policy",
+    "finding": "An IAM role trust policy allows access from unknown AWS accounts.",
+    "severity": "high",
+    "remediation": "Restrict the trust policy to specific, known AWS accounts and roles. Remove cross-account access that is not explicitly required.",
+    "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html"],
+    "keywords": ["trust policy", "cross-account", "assume role", "sts"]
+  },
+  {
+    "id": "NET-001",
+    "category": "Network",
+    "title": "Security group allows SSH from 0.0.0.0/0",
+    "finding": "The production security group allows SSH from 0.0.0.0/0.",
+    "severity": "critical",
+    "remediation": "Restrict SSH access to approved bastion hosts or VPN CIDRs. Use Systems Manager Session Manager for shell access instead of open SSH.",
+    "references": ["https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/authorizing-access-to-an-instance.html"],
+    "keywords": ["ssh", "security group", "0.0.0.0/0", "ingress", "bastion"]
+  },
+  {
+    "id": "NET-002",
+    "category": "Network",
+    "title": "Public load balancer with no WAF",
+    "finding": "An Application Load Balancer is exposed to the internet without a Web Application Firewall.",
+    "severity": "high",
+    "remediation": "Attach AWS WAF to the ALB. Configure rules for common web exploits, rate limiting, and IP reputation. Review WAF logs regularly.",
+    "references": ["https://docs.aws.amazon.com/waf/latest/developerguide/waf-chapter-managing-rules.html"],
+    "keywords": ["load balancer", "alb", "waf", "web application firewall", "public"]
+  },
+  {
+    "id": "NET-003",
+    "category": "Network",
+    "title": "No network segmentation between environments",
+    "finding": "Production and staging workloads share the same VPC subnets with no network policies.",
+    "severity": "medium",
+    "remediation": "Separate environments into distinct subnets and VPCs. Apply security groups and NACLs to restrict cross-environment traffic.",
+    "references": ["https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Security.html"],
+    "keywords": ["segmentation", "vpc", "subnet", "network policy", "staging", "production"]
+  },
+  {
+    "id": "NET-004",
+    "category": "Network",
+    "title": "Kubernetes Service exposed via LoadBalancer without restrictions",
+    "finding": "A Kubernetes Service of type LoadBalancer is publicly accessible with no network policies restricting pod traffic.",
+    "severity": "high",
+    "remediation": "Apply Kubernetes NetworkPolicies to restrict ingress and egress. Use an internal load balancer or ingress controller with authentication.",
+    "references": ["https://kubernetes.io/docs/concepts/services-networking/network-policies/"],
+    "keywords": ["kubernetes", "service", "loadbalancer", "network policy", "ingress"]
+  },
+  {
+    "id": "CTR-001",
+    "category": "Container",
+    "title": "Container runs as root in privileged mode",
+    "finding": "The Kubernetes workload runs as root in a privileged container.",
+    "severity": "critical",
+    "remediation": "Set runAsNonRoot: true, drop all capabilities, and remove privileged: true. Use a minimal base image and scan for vulnerabilities in CI.",
+    "references": ["https://kubernetes.io/docs/concepts/security/pod-security-standards/"],
+    "keywords": ["container", "privileged", "root", "kubernetes", "pod", "security context"]
+  },
+  {
+    "id": "CTR-002",
+    "category": "Container",
+    "title": "Container image not scanned for vulnerabilities",
+    "finding": "Container images are deployed without vulnerability scanning in the CI pipeline.",
+    "severity": "high",
+    "remediation": "Integrate image scanning (Trivy, Grype, ECR scanning) into CI/CD. Block deployment of images with critical or high vulnerabilities.",
+    "references": ["https://trivy.dev/latest/"],
+    "keywords": ["image", "vulnerability", "scan", "trivy", "grype", "ci/cd"]
+  },
+  {
+    "id": "CTR-003",
+    "category": "Container",
+    "title": "Container uses latest tag",
+    "finding": "The container image uses the 'latest' tag which is mutable and unpredictable.",
+    "severity": "medium",
+    "remediation": "Pin images to specific version tags or digests. Use immutable tags and maintain a base image update process.",
+    "references": ["https://docs.docker.com/develop/develop-images/dockerfile_best-practices/"],
+    "keywords": ["container", "image", "latest tag", "mutable", "docker"]
+  },
+  {
+    "id": "SEC-001",
+    "category": "Secrets",
+    "title": "Database password hardcoded in repository",
+    "finding": "A database password is hardcoded in the Git repository.",
+    "severity": "critical",
+    "remediation": "Revoke the exposed credential immediately. Move secrets to a managed store (AWS Secrets Manager, HashiCorp Vault). Rotate the secret and scan git history.",
+    "references": ["https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html"],
+    "keywords": ["secret", "password", "hardcoded", "credential", "git", "database"]
+  },
+  {
+    "id": "SEC-002",
+    "category": "Secrets",
+    "title": "API key committed to version control",
+    "finding": "An API key for a third-party service was committed to the Git repository.",
+    "severity": "critical",
+    "remediation": "Revoke the API key immediately. Remove from git history using git filter-branch or BFG. Store in a secrets manager and inject at runtime.",
+    "references": ["https://rtyley.github.io/bfg-repo-cleaner/"],
+    "keywords": ["api key", "secret", "git", "committed", "credential", "token"]
+  },
+  {
+    "id": "SEC-003",
+    "category": "Secrets",
+    "title": "No secret rotation policy",
+    "finding": "Secrets and credentials have not been rotated in over 90 days.",
+    "severity": "medium",
+    "remediation": "Implement automatic secret rotation. Use AWS Secrets Manager rotation lambda or Vault dynamic secrets. Set rotation policies for all credentials.",
+    "references": ["https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotate-secrets.html"],
+    "keywords": ["rotation", "secret", "credential", "policy", "stale"]
+  },
+  {
+    "id": "DAT-001",
+    "category": "Data",
+    "title": "S3 bucket with customer records has no encryption",
+    "finding": "The storage bucket contains customer records with no encryption at rest.",
+    "severity": "critical",
+    "remediation": "Enable SSE-S3 or SSE-KMS encryption. Enforce encryption via bucket policy. Enable access logging and audit trails.",
+    "references": ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/serv-side-encryption.html"],
+    "keywords": ["s3", "bucket", "encryption", "customer data", "storage"]
+  },
+  {
+    "id": "DAT-002",
+    "category": "Data",
+    "title": "RDS instance not encrypted at rest",
+    "finding": "An RDS database instance stores sensitive data without encryption at rest.",
+    "severity": "high",
+    "remediation": "Enable encryption at rest during the next maintenance window. For existing instances, create an encrypted snapshot and restore to a new encrypted instance.",
+    "references": ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html"],
+    "keywords": ["rds", "database", "encryption", "at rest", "aws"]
+  },
+  {
+    "id": "DAT-003",
+    "category": "Data",
+    "title": "No backup retention policy",
+    "finding": "Database backups are not configured with a retention policy.",
+    "severity": "medium",
+    "remediation": "Enable automated backups with appropriate retention (minimum 7 days). Test restore procedures regularly. Store backups in a separate region.",
+    "references": ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html"],
+    "keywords": ["backup", "retention", "database", "recovery", "rds"]
+  },
+  {
+    "id": "DAT-004",
+    "category": "Data",
+    "title": "Data transmitted over unencrypted channel",
+    "finding": "Application traffic between services uses HTTP instead of HTTPS.",
+    "severity": "high",
+    "remediation": "Enable TLS for all service-to-service communication. Use mutual TLS (mTLS) where possible. Redirect HTTP to HTTPS.",
+    "references": ["https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html"],
+    "keywords": ["tls", "https", "encryption", "transport", "certificate"]
+  },
+  {
+    "id": "IAM-004",
+    "category": "IAM",
+    "title": "Service account with excessive RBAC permissions",
+    "finding": "A Kubernetes service account has cluster-admin role binding.",
+    "severity": "critical",
+    "remediation": "Apply least privilege RBAC. Create custom roles with only required verbs and resources. Audit service account permissions regularly.",
+    "references": ["https://kubernetes.io/docs/reference/access-authn-authz/rbac/"],
+    "keywords": ["rbac", "service account", "cluster-admin", "kubernetes", "role binding"]
+  },
+  {
+    "id": "NET-005",
+    "category": "Network",
+    "title": "DNS over UDP without DNSSEC",
+    "finding": "DNS resolution uses UDP without DNSSEC validation enabled.",
+    "severity": "medium",
+    "remediation": "Enable DNSSEC on the hosted zone. Configure DNS resolvers to validate DNSSEC signatures. Monitor for DNS spoofing attempts.",
+    "references": ["https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring-dnssec.html"],
+    "keywords": ["dns", "dnssec", "udp", "spoofing", "route53"]
+  },
+  {
+    "id": "CTR-004",
+    "category": "Container",
+    "title": "Helm chart with default credentials",
+    "finding": "A Helm chart deploys an application with default admin credentials.",
+    "severity": "high",
+    "remediation": "Override default credentials during deployment. Use Kubernetes secrets or external secret operators. Rotate credentials after initial deployment.",
+    "references": ["https://helm.sh/docs/howto/charts_secrets/"],
+    "keywords": ["helm", "chart", "default", "credentials", "password", "kubernetes"]
+  }
+]
