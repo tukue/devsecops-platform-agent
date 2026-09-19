@@ -58,17 +58,17 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 | Area | Advisor behavior | Example guidance |
 | --- | --- | --- |
-| IAM | Detects risky permission and authentication patterns. | Apply least privilege, remove wildcard permissions, and require MFA. |
-| Network security | Identifies overly broad ingress and segmentation gaps. | Limit ports and CIDRs; add workload segmentation and NetworkPolicies. |
+| Identity and Access Management (IAM) | Detects risky permission and authentication patterns. | Apply least privilege, remove wildcard permissions, and require Multi-Factor Authentication (MFA). |
+| Network security | Identifies overly broad ingress and segmentation gaps. | Limit ports and Classless Inter-Domain Routing (CIDR) ranges; add workload segmentation and Kubernetes NetworkPolicies. |
 | Container security | Reviews dangerous workload configurations. | Use patched minimal images, run as non-root, drop capabilities, and scan in CI. |
 | Secrets management | Detects exposed or hard-coded credentials. | Revoke and rotate the secret, remove it from history, and use a managed store. |
 | Data protection | Identifies encryption and access-control gaps. | Encrypt data, restrict access, enable auditing, and protect backups. |
 
 ## AI Agent Features
 
-### RAG (Retrieval-Augmented Generation)
+### Retrieval-Augmented Generation (RAG)
 
-- **TF-IDF + keyword hybrid search** over a 20-entry security knowledge base
+- **Term Frequency-Inverse Document Frequency (TF-IDF) + keyword hybrid search** over a 20-entry security knowledge base
 - **Query expansion** with category and finding synonyms for better retrieval
 - **Reranking** with category boosting and severity weighting
 - Returns relevant remediation guidance from the knowledge base alongside the classification
@@ -111,6 +111,336 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 - **Hallucination detection**: Flags overconfident claims ("guaranteed", "100% secure")
 - **Prompt leakage detection**: Prevents the model from revealing system instructions
 - **Remediation quality validation**: Checks that responses include relevant security guidance
+
+## System Architecture
+
+### High-Level Request Flow
+
+```mermaid
+flowchart TB
+    User([User submits\nsecurity finding])
+
+    subgraph INPUT["Input Layer"]
+        V[Input Validation\n6-Layer Defense]
+        RL[Rate Limiter]
+    end
+
+    subgraph RAG["Retrieval-Augmented Generation"]
+        QE[Query Expansion\nSynonym Loading]
+        TFIDF["Term Frequency-Inverse\nDocument Frequency Search"]
+        KW["Keyword Index\nExact Match"]
+        HS["Hybrid Score\n60% TF-IDF + 40% Keyword"]
+        RR["Reranker\nCategory + Severity Boost"]
+        KB[("Security Knowledge Base\n20 Entries")]
+    end
+
+    subgraph CLASSIFY["Classification Layer"]
+        RULE["Rule-Based\nPattern Matcher"]
+        ENSEMBLE["Multi-Model\nEnsemble Classifier"]
+        SEV["Severity\nAssessor"]
+    end
+
+    subgraph MEMORY["Session Memory"]
+        MEM[("Conversation Memory\nSession History")]
+        CTX["Context Builder\nPrevious Findings"]
+    end
+
+    subgraph REASON["Reasoning Layer"]
+        COT["Chain-of-Thought\nStep-by-Step Reasoning"]
+        owner["Owner Resolver\nTeam Assignment"]
+    end
+
+    subgraph OUTPUT["Output Layer"]
+        OF["Output Filter\nPII Mask + Safety Check"]
+        RESP["Response Builder\nJSON Output"]
+    end
+
+    User --> V
+    V -->|valid| RL
+    V -->|invalid| ERR([Error Response])
+    RL -->|allowed| QE
+    RL -->|throttled| ERR
+
+    QE --> KB
+    KB --> TFIDF
+    KB --> KW
+    TFIDF --> HS
+    KW --> HS
+    HS --> RR
+    RR --> RAG_OUT([Retrieved Context\nTop 3-5 Entries])
+
+    RAG_OUT --> RULE
+    User --> RULE
+    RULE -->|matched| SEV
+    RULE -->|no match| ENSEMBLE
+    ENSEMBLE --> SEV
+
+    SEV --> COT
+    RAG_OUT --> COT
+    MEM --> CTX
+    CTX --> COT
+
+    COT --> OF
+    OF --> RESP
+    RESP --> RESULT([Security Assessment\nCategory + Severity + Remediation])
+```
+
+### Retrieval-Augmented Generation (RAG) Pipeline
+
+```mermaid
+flowchart LR
+    subgraph QUERY["Query Processing"]
+        Q[User Query] --> EXP[Query Expansion]
+        EXP --> |"original + synonyms"| VEC[Vector Encoding]
+    end
+
+    subgraph RETRIEVAL["Hybrid Retrieval"]
+        VEC --> TFIDF2["TF-IDF Search\nCosine Similarity"]
+        VEC --> KW2["Keyword Search\nExact Matching"]
+        TFIDF2 --> COMBINE["Score Combiner\n0.6 x TF-IDF + 0.4 x Keyword"]
+        KW2 --> COMBINE
+    end
+
+    subgraph RERANK["Reranking"]
+        COMBINE --> RR2["Reranker"]
+        RR2 --> |"category boost"| FINAL["Top-K Results"]
+        RR2 --> |"severity boost"| FINAL
+        RR2 --> |"title overlap"| FINAL
+    end
+
+    subgraph CONTEXT["Context Assembly"]
+        FINAL --> CTX2["Context Builder"]
+        CTX2 --> |"KB entries"| OUT["Retrieved Context"]
+        CTX2 --> |"session history"| OUT
+    end
+
+    OUT --> LLM["Ensemble Classifier\nRule Match or Zero-Shot"]
+    LLM --> RESULT2["Classification + Remediation"]
+```
+
+### Input Validation Pipeline (6-Layer Defense)
+
+```mermaid
+flowchart TD
+    INPUT([User Input])
+
+    L1["Layer 1: Pattern Matching\nInstruction Override, Role Hijack"]
+    L2["Layer 2: Encoding Evasion\nBase64, Rot13, Unicode"]
+    L3["Layer 3: Multilingual Injection\nSpanish, French, German, Japanese, Korean"]
+    L4["Layer 4: Separator Injection\nSpecial Tokens, System Prompt Breaks"]
+    L5["Layer 5: PII Detection\nCredit Cards, SSN, Email, AWS Keys"]
+    L6["Layer 6: Rate Limiting\nPer-Client Throttling"]
+
+    VALID([Valid Input\nProceed to RAG])
+    BLOCKED([Blocked\nError Response])
+
+    INPUT --> L1
+    L1 -->|pass| L2
+    L1 -->|fail| BLOCKED
+    L2 -->|pass| L3
+    L2 -->|fail| BLOCKED
+    L3 -->|pass| L4
+    L3 -->|fail| BLOCKED
+    L4 -->|pass| L5
+    L4 -->|fail| BLOCKED
+    L5 -->|pass| L6
+    L5 -->|fail| BLOCKED
+    L6 -->|pass| VALID
+    L6 -->|fail| BLOCKED
+```
+
+### Output Filtering Pipeline
+
+```mermaid
+flowchart TD
+    INPUT2([Generated Response])
+
+    M1["PII Masking\nRedact Sensitive Data"]
+    M2["Unsafe Advice Blocking\nRun as Root, Disable Firewall"]
+    M3["Hallucination Detection\nGuaranteed, 100% Secure"]
+    M4["Prompt Leakage Detection\nSystem Instructions Leak"]
+    M5["Remediation Quality Check\nCategory-Specific Keywords"]
+
+    SAFE([Safe Output\nReturned to User])
+    FILTERED([Filtered Output\nIssues Flagged])
+
+    INPUT2 --> M1
+    M1 --> M2
+    M2 --> M3
+    M3 --> M4
+    M4 --> M5
+    M5 -->|all pass| SAFE
+    M5 -->|issues found| FILTERED
+```
+
+### Cloud Extension Architecture
+
+```mermaid
+flowchart TB
+    subgraph CURRENT["Current: Single-Agent Gradio App"]
+        G["Gradio UI"]
+        A["Agent Core\nRAG + Classification"]
+        KB2[("Local JSON\nKnowledge Base")]
+        G --> A --> KB2
+    end
+
+    subgraph EXTENDED["Extended: Production Cloud Deployment"]
+        direction TB
+
+        subgraph INGEST["Ingestion Layer"]
+            CI["CI/CD Scanner\nGitHub Actions"]
+            IAC["Infrastructure-as-Code\nScanner"]
+            TICKET["Ticketing System\nJira, ServiceNow"]
+            ALERT2["Alert Manager\nPagerDuty, OpsGenie"]
+        end
+
+        subgraph PROCESS["Processing Layer"]
+            API["API Gateway\nRate Limiting + Auth"]
+            QUEUE["Message Queue\nSQS, Kafka, RabbitMQ"]
+            WORKER["Worker Pool\nMultiple Agent Instances"]
+        end
+
+        subgraph STORE["Storage Layer"]
+            VDB[("Vector Database\nPinecone / Weaviate / pgvector")]
+            RDB[("Relational Database\nPostgreSQL")]
+            CACHE2[("Cache\nRedis")]
+            OBJ[("Object Storage\nS3 / GCS / Azure Blob")]
+        end
+
+        subgraph RETRIEVE["Retrieval Layer"]
+            EMBED["Embedding Service\nSentence Transformers"]
+            RAG2["RAG Pipeline\nHybrid Search"]
+            RERANK2["Reranker\nCross-Encoder"]
+        end
+
+        subgraph OUTPUT3["Output Layer"]
+            DASH["Dashboard\nGrafana / Datadog"]
+            NOTIFY["Notification Service\nEmail, Slack, Webhook"]
+            AUDIT["Audit Log\nCompliance Trail"]
+        end
+    end
+
+    CI --> API
+    IAC --> API
+    TICKET --> API
+    ALERT2 --> API
+
+    API --> QUEUE
+    QUEUE --> WORKER
+
+    WORKER --> EMBED
+    EMBED --> VDB
+    VDB --> RAG2
+    RAG2 --> RERANK2
+
+    WORKER --> RDB
+    WORKER --> CACHE2
+    WORKER --> OBJ
+
+    RERANK2 --> DASH
+    RERANK2 --> NOTIFY
+    RERANK2 --> AUDIT
+
+    style CURRENT fill:#e8f5e9,stroke:#2e7d32
+    style EXTENDED fill:#e3f2fd,stroke:#1565c0
+```
+
+### Multi-Cloud Deployment Options
+
+```mermaid
+flowchart LR
+    subgraph AWS["Amazon Web Services"]
+        ECS["ECS Fargate\nServerless Containers"]
+        LAMBDA["Lambda\nEvent-Driven"]
+        S3AWS["S3\nObject Storage"]
+        DYNAMO["DynamoDB\nNoSQL"]
+        SQS["SQS\nMessage Queue"]
+        SECRETSM["Secrets Manager\nCredential Storage"]
+    end
+
+    subgraph GCP["Google Cloud Platform"]
+        GKE["GKE Autopilot\nManaged Kubernetes"]
+        CF["Cloud Functions\nServerless"]
+        GCS["Cloud Storage\nObject Storage"]
+        FIRESTORE["Firestore\nNoSQL"]
+        PUBSUB["Pub/Sub\nMessage Queue"]
+        SECRETGM["Secret Manager\nCredential Storage"]
+    end
+
+    subgraph AZURE["Microsoft Azure"]
+        AKS["AKS\nManaged Kubernetes"]
+        AF["Azure Functions\nServerless"]
+        BLOB["Blob Storage\nObject Storage"]
+        COSMOS["CosmosDB\nNoSQL"]
+        SB["Service Bus\nMessage Queue"]
+        KV["Key Vault\nCredential Storage"]
+    end
+
+    subgraph AGENT["Agent Deployment"]
+        GRADIO["Gradio App\nCurrent State"]
+        DOCKER["Docker Container\nPortable"]
+        K8S["Kubernetes\nOrchestrated"]
+        SERVERLESS["Serverless\nAuto-Scaling"]
+    end
+
+    GRADIO --> DOCKER
+    DOCKER --> K8S
+    DOCKER --> SERVERLESS
+
+    K8S --> ECS
+    K8S --> GKE
+    K8S --> AKS
+
+    SERVERLESS --> LAMBDA
+    SERVERLESS --> CF
+    SERVERLESS --> AF
+```
+
+### End-to-End Request Sequence
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Validation as Input Validation
+    participant RAG as RAG Pipeline
+    participant KB as Knowledge Base
+    participant Classify as Classifier
+    participant Memory as Session Memory
+    participant CoT as Chain-of-Thought
+    participant Filter as Output Filter
+    participant Response as Response
+
+    User->>Validation: Submit security finding
+    Validation->>Validation: Layer 1-6 checks
+    alt Invalid input
+        Validation-->>User: Error response
+    else Valid input
+        Validation->>RAG: Forward finding
+        RAG->>RAG: Expand query with synonyms
+        RAG->>KB: TF-IDF + Keyword search
+        KB-->>RAG: Top 3-5 entries
+        RAG->>RAG: Rerank with category boost
+        RAG-->>Classify: Retrieved context
+
+        Classify->>Classify: Rule match?
+        alt Rule matched
+            Classify->>Classify: Category + Severity
+        else No rule match
+            Classify->>Classify: Multi-model ensemble
+        end
+
+        Classify->>Memory: Store result
+        Memory-->>Classify: Session context
+
+        Classify->>CoT: Classification + Context
+        CoT->>CoT: Generate step-by-step reasoning
+        CoT-->>Filter: Full assessment
+
+        Filter->>Filter: PII mask + safety check
+        Filter-->>Response: Filtered result
+        Response-->>User: JSON assessment
+    end
+```
 
 ## Decision Model and Safety
 
