@@ -64,12 +64,64 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 | Secrets management | Detects exposed or hard-coded credentials. | Revoke and rotate the secret, remove it from history, and use a managed store. |
 | Data protection | Identifies encryption and access-control gaps. | Encrypt data, restrict access, enable auditing, and protect backups. |
 
+## AI Agent Features
+
+### RAG (Retrieval-Augmented Generation)
+
+- **TF-IDF + keyword hybrid search** over a 20-entry security knowledge base
+- **Query expansion** with category and finding synonyms for better retrieval
+- **Reranking** with category boosting and severity weighting
+- Returns relevant remediation guidance from the knowledge base alongside the classification
+
+### Chain-of-Thought Reasoning
+
+- Step-by-step explanation of how the finding was classified
+- Shows which method was used (rule-based match vs. ensemble)
+- Explains severity assessment with specific reasons
+- Reports human review requirements and recommended owner
+- Activated via the "Analyze with Chain-of-Thought" button
+
+### Conversation Memory
+
+- Session-based memory tracks previous findings in a conversation
+- Provides risk summary across the session (severity distribution, categories covered)
+- Relates new findings to previous ones for context-aware recommendations
+- Configurable session limits and history depth
+
+### Multi-Model Ensemble
+
+- Rule-based classification for deterministic pattern matches (confidence: 1.0)
+- Zero-shot classification using multiple transformer models when rules don't match
+- Weighted ensemble voting across models
+- Agreement tracking — flags when models disagree for human review
+
+### Input Validation (6-Layer Prompt Injection Defense)
+
+- **Pattern matching**: Detects instruction override, role hijack, exfiltration attempts
+- **Encoding evasion**: Blocks base64, rot13, unicode escape attempts
+- **Multilingual injection**: Detects prompt injection in Spanish, French, German, Japanese, Korean
+- **Separator injection**: Blocks special tokens like `[INST]`, `<|system|>`, `---END OF SYSTEM PROMPT---`
+- **PII detection**: Catches credit cards, SSNs, emails, AWS keys before processing
+- **Rate limiting**: Prevents abuse with per-client request throttling
+
+### Output Filtering
+
+- **PII masking**: Redacts sensitive data from responses
+- **Unsafe advice blocking**: Prevents dangerous recommendations (run as root, disable firewall, commit secrets)
+- **Hallucination detection**: Flags overconfident claims ("guaranteed", "100% secure")
+- **Prompt leakage detection**: Prevents the model from revealing system instructions
+- **Remediation quality validation**: Checks that responses include relevant security guidance
+
 ## Decision Model and Safety
 
-The advisor evaluates a submitted finding with two controls:
+The advisor evaluates a submitted finding with layered controls:
 
-1. **Severity rules** identify known high-risk indicators, including public exposure, wildcard permissions, root access, privileged containers, and committed secrets.
-2. **AI classification** assigns the finding to its most relevant platform-security domain and returns a confidence score.
+1. **Input validation** blocks prompt injection, PII, and off-topic inputs before processing.
+2. **Severity rules** identify known high-risk indicators, including public exposure, wildcard permissions, root access, privileged containers, and committed secrets.
+3. **Ensemble classification** uses rule matching first, then falls back to multi-model zero-shot classification with weighted voting.
+4. **RAG retrieval** pulls relevant remediation guidance from the security knowledge base.
+5. **Output filtering** masks PII, blocks unsafe advice, and validates response quality.
+6. **Chain-of-thought** provides transparent reasoning for every classification decision.
 
 High- and critical-severity results, and results below the confidence threshold, require human review. Automation is disabled by design. Teams must validate recommendations against their environment, change-management process, and approved security policies before acting.
 
@@ -99,12 +151,40 @@ High- and critical-severity results, and results below the confidence threshold,
 
 ```bash
 python -m venv .venv
-.venv\\Scripts\\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python app.py
 ```
 
 Open the local Gradio address shown in the terminal, normally `http://127.0.0.1:7860`.
+
+### Run Tests
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
+
+## Repository Structure
+
+```text
+.
+├── app.py                      # Gradio UI and Hugging Face Space entrypoint
+├── requirements.txt            # Runtime dependencies
+├── data/
+│   └── security_kb.json        # Security knowledge base (20 entries)
+├── src/
+│   ├── __init__.py
+│   ├── ensemble.py             # Multi-model ensemble classifier
+│   ├── retriever.py            # TF-IDF + keyword hybrid RAG retriever
+│   ├── memory.py               # Conversation memory and session state
+│   ├── chain_of_thought.py     # Step-by-step reasoning generator
+│   ├── input_validation.py     # 6-layer prompt injection defense
+│   └── output_filter.py        # PII masking, unsafe advice blocking
+├── tests/
+│   └── test_pipeline.py        # 57 tests across all modules
+└── .github/workflows/          # CI/CD workflows
+```
 
 ## Roadmap
 
