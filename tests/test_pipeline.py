@@ -451,3 +451,148 @@ def test_cot_severity_explanation():
     )
     severity_step = next(s for s in steps if s["name"] == "Severity Assessment")
     assert "public" in severity_step["description"].lower() or "exposure" in severity_step["description"].lower()
+
+
+# ── Observability Tests ──
+
+from src.observability import (
+    record_request, record_validation_block, record_output_filter_issue,
+    record_rag_retrieval, record_ensemble_disagreement, record_human_review,
+    record_error, record_session, record_finding_in_session,
+    get_metrics, get_health_status, reset_metrics, PerformanceTimer,
+)
+import time
+
+
+def test_record_request():
+    reset_metrics()
+    record_request("Network", "critical", "rule_match", trace_id="test-1")
+    metrics = get_metrics()
+    assert metrics["summary"]["requests_total"] == 1
+    assert metrics["breakdowns"]["by_category"]["Network"] == 1
+    assert metrics["breakdowns"]["by_severity"]["critical"] == 1
+    assert metrics["breakdowns"]["by_method"]["rule_match"] == 1
+
+
+def test_record_validation_block():
+    reset_metrics()
+    record_validation_block("prompt_injection")
+    metrics = get_metrics()
+    assert metrics["summary"]["validation_blocks_total"] == 1
+    assert metrics["breakdowns"]["validation_blocks_by_reason"]["prompt_injection"] == 1
+
+
+def test_record_output_filter_issue():
+    reset_metrics()
+    record_output_filter_issue("unsafe_advice")
+    metrics = get_metrics()
+    assert metrics["summary"]["output_filter_issues_total"] == 1
+    assert metrics["breakdowns"]["output_filter_issues_by_type"]["unsafe_advice"] == 1
+
+
+def test_record_rag_retrieval():
+    reset_metrics()
+    record_rag_retrieval(0.85)
+    record_rag_retrieval(0.72)
+    metrics = get_metrics()
+    assert metrics["summary"]["rag_retrievals_total"] == 2
+    assert metrics["performance"]["avg_rag_retrieval_score"] == 0.785
+
+
+def test_record_ensemble_disagreement():
+    reset_metrics()
+    record_ensemble_disagreement()
+    metrics = get_metrics()
+    assert metrics["summary"]["ensemble_disagreements_total"] == 1
+
+
+def test_record_human_review():
+    reset_metrics()
+    record_human_review()
+    metrics = get_metrics()
+    assert metrics["summary"]["human_review_required_total"] == 1
+
+
+def test_record_error():
+    reset_metrics()
+    record_error("test_error", "something went wrong")
+    metrics = get_metrics()
+    assert metrics["summary"]["errors_total"] == 1
+
+
+def test_record_session():
+    reset_metrics()
+    record_session("session_1")
+    metrics = get_metrics()
+    assert metrics["summary"]["sessions_total"] == 1
+
+
+def test_health_status_healthy():
+    reset_metrics()
+    for i in range(10):
+        record_request("Network", "low", "rule_match")
+    health = get_health_status()
+    assert health["status"] == "healthy"
+    assert health["checks"]["request_processing"] == "ok"
+
+
+def test_health_status_degraded_high_errors():
+    reset_metrics()
+    for i in range(10):
+        record_request("Network", "low", "rule_match")
+    for i in range(5):
+        record_error("test", "error")
+    health = get_health_status()
+    assert health["status"] == "degraded"
+
+
+def test_health_status_degraded_high_block_rate():
+    reset_metrics()
+    for i in range(5):
+        record_request("Network", "low", "rule_match")
+    for i in range(10):
+        record_validation_block("injection")
+    health = get_health_status()
+    assert health["status"] == "degraded"
+
+
+def test_performance_timer_success():
+    reset_metrics()
+    with PerformanceTimer("test_operation"):
+        time.sleep(0.01)
+    metrics = get_metrics()
+    assert metrics["performance"]["avg_response_time_ms"] > 0
+
+
+def test_performance_timer_error():
+    reset_metrics()
+    try:
+        with PerformanceTimer("failing_operation"):
+            raise ValueError("test error")
+    except ValueError:
+        pass
+    metrics = get_metrics()
+    assert metrics["summary"]["errors_total"] == 0
+
+
+def test_reset_metrics():
+    reset_metrics()
+    record_request("IAM", "critical", "rule_match")
+    record_validation_block("test")
+    reset_metrics()
+    metrics = get_metrics()
+    assert metrics["summary"]["requests_total"] == 0
+    assert metrics["summary"]["validation_blocks_total"] == 0
+
+
+def test_metrics_multiple_categories():
+    reset_metrics()
+    record_request("IAM", "critical", "rule_match")
+    record_request("Network", "high", "ensemble")
+    record_request("Container", "medium", "rule_match")
+    record_request("Secrets", "critical", "ensemble")
+    metrics = get_metrics()
+    assert metrics["breakdowns"]["by_category"]["IAM"] == 1
+    assert metrics["breakdowns"]["by_category"]["Network"] == 1
+    assert metrics["breakdowns"]["by_category"]["Container"] == 1
+    assert metrics["breakdowns"]["by_category"]["Secrets"] == 1

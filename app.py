@@ -6,6 +6,14 @@ from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
 from src.output_filter import filter_output
+from src.observability import (
+    setup_logging, PerformanceTimer, record_request, record_validation_block,
+    record_output_filter_issue, record_rag_retrieval, record_ensemble_disagreement,
+    record_human_review, record_error, record_session, record_finding_in_session,
+    get_metrics, get_health_status, reset_metrics,
+)
+
+setup_logging(level="INFO", json_format=False)
 
 retriever = SecurityRetriever(top_k=5)
 classifier = EnsembleClassifier(confidence_threshold=0.55)
@@ -17,20 +25,38 @@ SESSION_COUNTER = 0
 def analyze_finding(finding, session_id=None):
     global SESSION_COUNTER
 
-    valid, errors, warnings = validate_input(finding)
-    if not valid:
-        return {"error": errors[0], "validation_errors": errors}
+    trace_id = None
+    from src.observability import _get_trace_id
+    trace_id = _get_trace_id()
+
+    with PerformanceTimer("input_validation", trace_id):
+        valid, errors, warnings = validate_input(finding)
+        if not valid:
+            record_validation_block(errors[0] if errors else "unknown")
+            record_error("validation", errors[0])
+            return {"error": errors[0], "validation_errors": errors, "trace_id": trace_id}
 
     if session_id is None:
         SESSION_COUNTER += 1
         session_id = f"session_{SESSION_COUNTER}"
+        record_session(session_id)
 
-    classification = classifier.classify(finding)
+    with PerformanceTimer("classification", trace_id):
+        classification = classifier.classify(finding)
+        if classification.get("method") == "ensemble" and not classification.get("ensemble_agreement", True):
+            record_ensemble_disagreement()
+        if classification.get("human_review_required"):
+            record_human_review()
 
-    rag_context, rag_sources = retriever.build_context(finding, top_k=5)
+    with PerformanceTimer("rag_retrieval", trace_id):
+        rag_context, rag_sources = retriever.build_context(finding, top_k=5)
+        if rag_sources:
+            for source in rag_sources:
+                record_rag_retrieval(source.get("relevance", 0))
 
-    memory_context = memory.get_context(session_id)
-    related_context = memory.get_related_history(session_id, finding)
+    with PerformanceTimer("memory_lookup", trace_id):
+        memory_context = memory.get_context(session_id)
+        related_context = memory.get_related_history(session_id, finding)
 
     combined_context = rag_context
     if memory_context:
@@ -49,13 +75,24 @@ def analyze_finding(finding, session_id=None):
     if memory_context:
         recommendation += f"\n\nSession context:\n{memory_context}"
 
-    filtered = filter_output(
-        recommendation,
-        finding=finding,
-        category=classification.get("category", ""),
+    with PerformanceTimer("output_filter", trace_id):
+        filtered = filter_output(
+            recommendation,
+            finding=finding,
+            category=classification.get("category", ""),
+        )
+        if not filtered["safe"]:
+            recommendation = filtered["filtered_text"]
+            for issue in filtered.get("issues", []):
+                record_output_filter_issue(issue.split(":")[0] if ":" in issue else "unknown")
+
+    record_request(
+        category=classification["category"],
+        severity=classification["severity"],
+        method=classification.get("method", "unknown"),
+        trace_id=trace_id,
     )
-    if not filtered["safe"]:
-        recommendation = filtered["filtered_text"]
+    record_finding_in_session(session_id)
 
     result = {
         "category": classification["category"],
@@ -69,6 +106,7 @@ def analyze_finding(finding, session_id=None):
         "automation_allowed": False,
         "rag_sources": rag_sources,
         "session_id": session_id,
+        "trace_id": trace_id,
     }
 
     if warnings:
@@ -91,6 +129,7 @@ def review_finding(finding, session_id=None):
     try:
         return analyze_finding(finding, session_id)
     except Exception as e:
+        record_error("exception", str(e))
         return {"error": str(e)}
 
 
@@ -120,12 +159,26 @@ def review_finding_with_cot(finding, session_id=None):
         result["chain_of_thought"] = chain_of_thought
         return result
     except Exception as e:
+        record_error("exception", str(e))
         return {"error": str(e)}
 
 
 def clear_session(session_id):
     memory.clear_session(session_id)
     return {"status": f"Session {session_id} cleared."}
+
+
+def get_observability_metrics():
+    return get_metrics()
+
+
+def get_system_health():
+    return get_health_status()
+
+
+def reset_observability_metrics():
+    reset_metrics()
+    return {"status": "Metrics reset successfully."}
 
 
 TEST_FINDINGS = [
@@ -170,6 +223,17 @@ with gr.Blocks(title="AI DevSecOps Advisor") as demo:
 
         with gr.Column(scale=3):
             output_json = gr.JSON(label="Assessment")
+
+    with gr.Accordion("Observability and Monitoring", open=False):
+        with gr.Row():
+            metrics_btn = gr.Button("View Metrics")
+            health_btn = gr.Button("Health Check")
+            reset_btn = gr.Button("Reset Metrics")
+        observability_output = gr.JSON(label="Metrics / Health")
+
+    metrics_btn.click(fn=get_observability_metrics, outputs=[observability_output])
+    health_btn.click(fn=get_system_health, outputs=[observability_output])
+    reset_btn.click(fn=reset_observability_metrics, outputs=[observability_output])
 
     submit_btn.click(
         fn=review_finding,

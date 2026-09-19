@@ -442,6 +442,159 @@ sequenceDiagram
     end
 ```
 
+### Observability and Monitoring Architecture
+
+```mermaid
+flowchart TB
+    subgraph AGENT["Agent Request Processing"]
+        REQ([Incoming Request])
+        V["Input Validation"]
+        RAG2["RAG Pipeline"]
+        CLS["Classifier"]
+        OUT["Output Filter"]
+        RESP([Response])
+        REQ --> V --> RAG2 --> CLS --> OUT --> RESP
+    end
+
+    subgraph OBS["Observability Layer"]
+        direction LR
+
+        subgraph LOGGING["Logging"]
+            LOG structured["Structured JSON Logs"]
+            LOG trace["Trace ID per Request"]
+            LOG perf["Performance Timings"]
+        end
+
+        subgraph METRICS["Metrics Collection"]
+            M_req["Request Counters\nby Category, Severity, Method"]
+            M_val["Validation Blocks\nby Reason"]
+            M_rag["RAG Retrieval Scores"]
+            M_ens["Ensemble Disagreements"]
+            M_time["Response Time\nAvg, P95, P99"]
+            M_err["Error Counters"]
+        end
+
+        subgraph HEALTH["Health Checks"]
+            H_status["Service Status\nhealthy / degraded / unhealthy"]
+            H_error["Error Rate Check"]
+            H_block["Block Rate Check"]
+            H_perf["Performance Check"]
+        end
+    end
+
+    subgraph DASHBOARD["Dashboard Layer"]
+        GRADIO["Gradio UI\nMetrics Panel"]
+        PROM["Prometheus\nMetrics Export"]
+        GRAF["Grafana\nDashboards"]
+        ALERT["Alerting\nPagerDuty / Slack"]
+    end
+
+    V -->|"validation events"| M_val
+    RAG2 -->|"retrieval scores"| M_rag
+    CLS -->|"classification results"| M_req
+    CLS -->|"disagreement events"| M_ens
+    OUT -->|"filter issues"| M_val
+    REQ -->|"timing"| M_time
+    REQ -->|"errors"| M_err
+
+    M_req --> GRADIO
+    M_req --> PROM
+    M_time --> PROM
+    M_err --> PROM
+    PROM --> GRAF
+    PROM --> ALERT
+
+    H_error --> M_err
+    H_block --> M_val
+    H_perf --> M_time
+
+    style OBS fill:#fff3e0,stroke:#e65100
+    style DASHBOARD fill:#e8f5e9,stroke:#2e7d32
+```
+
+### Observability Data Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent
+    participant Timer as Performance Timer
+    participant Metrics as Metrics Store
+    participant Logs as Structured Logger
+    participant Health as Health Checker
+    participant Dashboard as Dashboard
+
+    User->>Agent: Submit finding
+    Agent->>Timer: Start timing
+
+    Agent->>Agent: Input validation
+    Agent->>Metrics: Record validation result
+
+    Agent->>Agent: RAG retrieval
+    Agent->>Metrics: Record retrieval scores
+
+    Agent->>Agent: Classification
+    Agent->>Metrics: Record category, severity, method
+
+    Agent->>Agent: Output filtering
+    Agent->>Metrics: Record filter issues
+
+    Agent->>Timer: Stop timing
+    Timer->>Metrics: Record response time
+    Timer->>Logs: Log operation + duration
+
+    Agent->>Logs: Log full request trace
+    Agent-->>User: Return assessment
+
+    Dashboard->>Metrics: Query metrics
+    Metrics-->>Dashboard: Return aggregated data
+    Dashboard->>Health: Check health status
+    Health->>Metrics: Read error rates, block rates
+    Health-->>Dashboard: Return health status
+```
+
+### Metrics Collected
+
+| Metric | Type | Description |
+|---|---|---|
+| requests_total | Counter | Total number of processed findings |
+| requests_by_category | Breakdown | Requests grouped by security category (IAM, Network, Container, Secrets, Data) |
+| requests_by_severity | Breakdown | Requests grouped by severity (critical, high, medium, low) |
+| requests_by_method | Breakdown | Requests grouped by classification method (rule_match, ensemble) |
+| validation_blocks_total | Counter | Total input validation rejections |
+| validation_blocks_by_reason | Breakdown | Blocks grouped by reason (prompt_injection, pii_detected, rate_limit) |
+| output_filter_issues_total | Counter | Total output filter issues found |
+| output_filter_issues_by_type | Breakdown | Issues grouped by type (unsafe_advice, hallucination, prompt_leakage) |
+| rag_retrievals_total | Counter | Total RAG retrievals performed |
+| rag_retrieval_scores | Histogram | Individual retrieval relevance scores |
+| ensemble_disagreements_total | Counter | Times ensemble models disagreed |
+| human_review_required_total | Counter | Findings flagged for human review |
+| errors_total | Counter | Total errors encountered |
+| response_times_ms | Histogram | Individual request response times |
+| avg_response_time_ms | Gauge | Average response time across all requests |
+| p95_response_time_ms | Gauge | 95th percentile response time |
+| p99_response_time_ms | Gauge | 99th percentile response time |
+
+### Health Check Status Logic
+
+```mermaid
+flowchart TD
+    START([Health Check Request]) --> ERR[Calculate Error Rate]
+    ERR --> ERR_CHECK{Error Rate > 10%?}
+    ERR_CHECK -->|Yes| DEGRADED1[Status: degraded\nReason: high error rate]
+    ERR_CHECK -->|No| PERF[Check Response Time]
+    PERF --> PERF_CHECK{Avg Response Time > 5000ms?}
+    PERF_CHECK -->|Yes| DEGRADED2[Status: degraded\nReason: slow response time]
+    PERF_CHECK -->|No| BLOCK[Check Block Rate]
+    BLOCK --> BLOCK_CHECK{Block Rate > 50%?}
+    BLOCK_CHECK -->|Yes| DEGRADED3[Status: degraded\nReason: high block rate]
+    BLOCK_CHECK -->|No| HEALTHY[Status: healthy\nAll checks passed]
+    DEGRADED1 --> RESULT([Return Health Status])
+    DEGRADED2 --> RESULT
+    DEGRADED3 --> RESULT
+    HEALTHY --> RESULT
+```
+
 ## Decision Model and Safety
 
 The advisor evaluates a submitted finding with layered controls:
@@ -510,9 +663,10 @@ python -m pytest tests/ -v
 │   ├── memory.py               # Conversation memory and session state
 │   ├── chain_of_thought.py     # Step-by-step reasoning generator
 │   ├── input_validation.py     # 6-layer prompt injection defense
-│   └── output_filter.py        # PII masking, unsafe advice blocking
+│   ├── output_filter.py        # PII masking, unsafe advice blocking
+│   └── observability.py        # Logging, metrics, tracing, health checks
 ├── tests/
-│   └── test_pipeline.py        # 57 tests across all modules
+│   └── test_pipeline.py        # 72 tests across all modules
 └── .github/workflows/          # CI/CD workflows
 ```
 
