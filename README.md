@@ -171,8 +171,8 @@ flowchart TB
 
     RAG_OUT --> RULE
     User --> RULE
-    RULE -->|matched| SEV
-    RULE -->|no match| ENSEMBLE
+    RULE -->|rule found| SEV
+    RULE -->|fallback| ENSEMBLE
     ENSEMBLE --> SEV
 
     SEV --> COT
@@ -423,9 +423,9 @@ sequenceDiagram
         RAG-->>Classify: Retrieved context
 
         Classify->>Classify: Rule match?
-        alt Rule matched
+        alt Rule found
             Classify->>Classify: Category + Severity
-        else No rule match
+        else Fallback
             Classify->>Classify: Multi-model ensemble
         end
 
