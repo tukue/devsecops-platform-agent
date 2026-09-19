@@ -99,7 +99,7 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 - **Pattern matching**: Detects instruction override, role hijack, exfiltration attempts
 - **Encoding evasion**: Blocks base64, rot13, unicode escape attempts
-- **Multilingual injection**: Detects prompt injection in non-English languages
+- **Multilingual injection**: Prompt injection security fix implemented for non-English languages
 - **Separator injection**: Blocks special tokens like `[INST]`, `<|system|>`, `---END OF SYSTEM PROMPT---`
 - **PII detection**: Catches credit cards, SSNs, emails, AWS keys before processing
 - **Rate limiting**: Prevents abuse with per-client request throttling
@@ -226,7 +226,7 @@ flowchart TD
 
     L1["Layer 1: Pattern Matching\nInstruction Override, Role Hijack"]
     L2["Layer 2: Encoding Evasion\nBase64, Rot13, Unicode"]
-    L3["Layer 3: Multilingual Injection\nNon-English Prompt Attacks"]
+    L3["Layer 3: Multilingual Injection\nPrompt Injection Security Fix Implemented"]
     L4["Layer 4: Separator Injection\nSpecial Tokens, System Prompt Breaks"]
     L5["Layer 5: PII Detection\nCredit Cards, SSN, Email, AWS Keys"]
     L6["Layer 6: Rate Limiting\nPer-Client Throttling"]
