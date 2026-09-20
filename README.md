@@ -76,7 +76,7 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 ### Chain-of-Thought Reasoning
 
 - Step-by-step explanation of how the finding was classified
-- Shows which method was used (rule-based match vs. ensemble)
+- Shows which method was used (rule-based detection vs. ensemble)
 - Explains severity assessment with specific reasons
 - Reports human review requirements and recommended owner
 - Activated via the "Analyze with Chain-of-Thought" button
@@ -90,14 +90,14 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 ### Multi-Model Ensemble
 
-- Rule-based classification for deterministic pattern matches (confidence: 1.0)
-- Zero-shot classification using multiple transformer models when rules don't match
+- Rule-based classification for deterministic pattern detection (confidence: 1.0)
+- Zero-shot classification using multiple transformer models when rules don't apply
 - Weighted ensemble voting across models
 - Agreement tracking — flags when models disagree for human review
 
 ### Input Validation (6-Layer Prompt Injection Defense)
 
-- **Pattern matching**: Detects instruction override, role hijack, exfiltration attempts
+- **Pattern detection**: Detects instruction override, role hijack, exfiltration attempts
 - **Encoding evasion**: Blocks base64, rot13, unicode escape attempts
 - **Multilingual injection**: Prompt injection security fix implemented for English and non-English languages
 - **Separator injection**: Blocks special tokens like `[INST]`, `<|system|>`, `---END OF SYSTEM PROMPT---`
@@ -128,14 +128,14 @@ flowchart TB
     subgraph RAG["Retrieval-Augmented Generation"]
         QE[Query Expansion\nSynonym Loading]
         TFIDF["Term Frequency-Inverse\nDocument Frequency Search"]
-        KW["Keyword Index\nExact Match"]
+        KW["Keyword Index\nExact Lookup"]
         HS["Hybrid Score\n60% TF-IDF + 40% Keyword"]
         RR["Reranker\nCategory + Severity Boost"]
         KB[("Security Knowledge Base\n20 Entries")]
     end
 
     subgraph CLASSIFY["Classification Layer"]
-        RULE["Rule-Based\nPattern Matcher"]
+        RULE["Rule-Based\nPattern Detector"]
         ENSEMBLE["Multi-Model\nEnsemble Classifier"]
         SEV["Severity\nAssessor"]
     end
@@ -196,7 +196,7 @@ flowchart LR
 
     subgraph RETRIEVAL["Hybrid Retrieval"]
         VEC --> TFIDF2["TF-IDF Search\nCosine Similarity"]
-        VEC --> KW2["Keyword Search\nExact Matching"]
+        VEC --> KW2["Keyword Search\nExact Lookup"]
         TFIDF2 --> COMBINE["Score Combiner\n0.6 x TF-IDF + 0.4 x Keyword"]
         KW2 --> COMBINE
     end
@@ -214,7 +214,7 @@ flowchart LR
         CTX2 --> |"session history"| OUT
     end
 
-    OUT --> LLM["Ensemble Classifier\nRule Match or Zero-Shot"]
+    OUT --> LLM["Ensemble Classifier\nRule Detection or Zero-Shot"]
     LLM --> RESULT2["Classification + Remediation"]
 ```
 
@@ -224,7 +224,7 @@ flowchart LR
 flowchart TD
     INPUT([User Input])
 
-    L1["Layer 1: Pattern Matching\nInstruction Override, Role Hijack"]
+    L1["Layer 1: Pattern Detection\nInstruction Override, Role Hijack"]
     L2["Layer 2: Encoding Evasion\nBase64, Rot13, Unicode"]
     L3["Layer 3: Multilingual Injection\nPrompt Injection Fix: English + Non-English"]
     L4["Layer 4: Separator Injection\nSpecial Tokens, System Prompt Breaks"]
@@ -422,7 +422,7 @@ sequenceDiagram
         RAG->>RAG: Rerank with category boost
         RAG-->>Classify: Retrieved context
 
-        Classify->>Classify: Rule match?
+        Classify->>Classify: Rule detected?
         alt Rule found
             Classify->>Classify: Category + Severity
         else Fallback
