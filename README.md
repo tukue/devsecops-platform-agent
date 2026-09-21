@@ -7,7 +7,7 @@ sdk: gradio
 python_version: "3.10"
 app_file: app.py
 fullWidth: true
-short_description: AI security triage for Platform Engineering and SRE teams.
+short_description: AI security classification and remediation guidance for Platform Engineering and SRE teams.
 ---
 
 # Platform Engineering DevSecOps Advisor
@@ -48,7 +48,7 @@ Platform Engineering teams build the paved roads that enable product teams to sh
 
 SRE teams balance reliability, operational risk, and engineering velocity. The advisor contributes by:
 
-- **Reducing toil:** It provides a standardized initial triage for common configuration and security findings.
+- **Reducing toil:** It provides a standardized initial assessment for common configuration and security findings.
 - **Protecting service reliability:** It identifies risky patterns—such as publicly exposed services, privileged workloads, and weak identity controls—that can lead to incidents.
 - **Supporting risk-based prioritization:** High and critical findings are flagged for human review, allowing experts to focus on material risk.
 - **Improving incident readiness:** Its remediation advice can be used to create consistent runbook steps and escalation paths.
@@ -617,7 +617,7 @@ High- and critical-severity results, and results below the confidence threshold,
 
 ## Expected Business Outcomes
 
-- Shorter mean time to triage and remediate platform-security findings.
+- Shorter mean time to classify and remediate platform-security findings.
 - Fewer production risks caused by insecure infrastructure defaults.
 - Lower interruption load on Platform Engineering, SRE, and Security teams.
 - More consistent remediation evidence for audits and compliance reviews.
