@@ -3,6 +3,9 @@ import gradio as gr
 import threading
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
+from src.controls import resolve_control
+from src.findings import canonicalize_finding
+from src.providers import ProviderRouter
 from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
@@ -19,6 +22,7 @@ setup_logging(level="INFO", json_format=False)
 retriever = SecurityRetriever(top_k=5)
 classifier = EnsembleClassifier(confidence_threshold=0.55)
 memory = ConversationMemory(max_sessions=10)
+provider_router = ProviderRouter()
 
 SESSION_COUNTER = 0
 SESSION_LOCK = threading.Lock()
@@ -51,6 +55,11 @@ def analyze_finding(finding, session_id=None):
             record_ensemble_disagreement()
         if classification.get("human_review_required"):
             record_human_review()
+        control = resolve_control(finding, classification["category"])
+        adapter = provider_router.select(finding)
+        canonical_finding = canonicalize_finding(
+            finding, classification, control, adapter.normalize(finding)
+        )
 
     with PerformanceTimer("rag_retrieval", trace_id):
         rag_context, rag_sources = retriever.build_context(finding, top_k=5)
@@ -72,6 +81,9 @@ def analyze_finding(finding, session_id=None):
         classification["category"],
         "Review the finding and apply standard security hardening practices.",
     )
+    provider_overlay = adapter.remediation_overlay(classification["control_id"])
+    if provider_overlay:
+        recommendation += f"\n\nAWS implementation guidance: {provider_overlay}"
 
     if rag_context:
         recommendation += f"\n\nKnowledge base guidance:\n{rag_context}"
@@ -100,12 +112,15 @@ def analyze_finding(finding, session_id=None):
 
     result = {
         "category": classification["category"],
+        "control_id": classification["control_id"],
         "severity": classification["severity"],
         "confidence": classification["confidence"],
         "method": classification.get("method", "unknown"),
         "ensemble_agreement": classification.get("ensemble_agreement", True),
         "recommendation": recommendation,
-        "owner": OWNERS.get(classification["category"], "Platform Security"),
+        "owner": classification.get("owner", OWNERS.get(classification["category"], "Platform Security")),
+        "validation_step": classification["validation_step"],
+        "finding": canonical_finding.to_dict(),
         "human_review_required": classification["severity"] in {"high", "critical"} or classification["confidence"] < 0.60,
         "automation_allowed": False,
         "rag_sources": rag_sources,
