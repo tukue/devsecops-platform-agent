@@ -15,8 +15,10 @@ from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.ensemble import (
     EnsembleClassifier, determine_category, determine_severity,
-    CATEGORY_RULES, SEVERITY_RULES, REMEDIATIONS, OWNERS,
+    determine_control, CATEGORY_RULES, SEVERITY_RULES, REMEDIATIONS, OWNERS,
 )
+from src.findings import canonicalize_finding, infer_provider
+from src.controls import resolve_control
 
 
 # ── Input Validation Tests ──
@@ -291,6 +293,32 @@ def test_rule_based_secrets():
 def test_rule_based_data():
     category = determine_category("S3 bucket has customer records with no encryption")
     assert category == "Data"
+
+
+def test_control_ids_preserve_existing_categories():
+    assert determine_control("The IAM role has wildcard permissions") == "identity.least-privilege"
+    assert determine_control("Security group allows SSH from 0.0.0.0/0") == "network.public-ingress"
+    assert determine_control("Kubernetes pod runs as root in privileged mode") == "container.privileged-workload"
+    assert determine_control("Hardcoded secret password in application code") == "secrets.exposure"
+    assert determine_control("S3 bucket has customer records with no encryption") == "storage.public-access"
+
+
+def test_canonical_finding_contract_and_provider_inference():
+    classifier = EnsembleClassifier()
+    classification = classifier.classify("AWS IAM role has wildcard permissions")
+    control = resolve_control("AWS IAM role has wildcard permissions", classification["category"])
+    finding = canonicalize_finding(
+        "AWS IAM role has wildcard permissions", classification, control,
+        {"account": "123456789012", "region": "eu-north-1", "scanner": "Security Hub"},
+    ).to_dict()
+    assert finding["provider"] == "aws"
+    assert finding["control_id"] == "identity.least-privilege"
+    assert finding["account"] == "123456789012"
+    assert finding["evidence"]
+
+
+def test_unknown_provider_remains_generic():
+    assert infer_provider("A workload has an unknown configuration") == "generic"
 
 
 def test_severity_critical():
