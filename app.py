@@ -6,6 +6,7 @@ from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_sev
 from src.controls import resolve_control
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
+from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
 from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
@@ -28,7 +29,7 @@ SESSION_COUNTER = 0
 SESSION_LOCK = threading.Lock()
 
 
-def analyze_finding(finding, session_id=None):
+def analyze_finding(finding, session_id=None, metadata=None):
     global SESSION_COUNTER
 
     trace_id = None
@@ -56,9 +57,9 @@ def analyze_finding(finding, session_id=None):
         if classification.get("human_review_required"):
             record_human_review()
         control = resolve_control(finding, classification["category"])
-        adapter = provider_router.select(finding)
+        adapter = provider_router.select(finding, metadata)
         canonical_finding = canonicalize_finding(
-            finding, classification, control, adapter.normalize(finding)
+            finding, classification, control, adapter.normalize(finding, metadata)
         )
 
     with PerformanceTimer("rag_retrieval", trace_id):
@@ -141,6 +142,24 @@ def analyze_finding(finding, session_id=None):
         result["session_risk_summary"] = risk_summary
 
     return result
+
+
+def analyze_ingested_findings(source, payload, session_id=None):
+    """Analyze exported scanner findings while retaining manual analysis compatibility."""
+    return [
+        analyze_finding(finding, session_id=session_id, metadata=metadata)
+        for finding, metadata in normalize_payload(source, payload)
+    ]
+
+
+def analyze_uploaded_findings(source, upload, session_id=None):
+    """UI-safe JSON upload entry point; manual text analysis remains available."""
+    try:
+        payload = load_json_upload(upload)
+        results = analyze_ingested_findings(source, payload, session_id)
+        return {"source": source, "finding_count": len(results), "results": results}
+    except FindingIngestionError as exc:
+        return {"error": str(exc)}
 
 
 @spaces.GPU
@@ -229,6 +248,17 @@ with gr.Blocks(title="AI DevSecOps Advisor") as demo:
                 placeholder="Leave blank for new session",
             )
 
+            with gr.Accordion("Upload scanner export (JSON)", open=False):
+                upload_source = gr.Dropdown(
+                    choices=["checkov", "trivy", "security_hub"],
+                    value="checkov",
+                    label="Export source",
+                )
+                finding_upload = gr.File(
+                    file_types=[".json"], type="filepath", label="JSON export (max 1 MB)"
+                )
+                upload_btn = gr.Button("Analyze uploaded findings")
+
             with gr.Row():
                 submit_btn = gr.Button("Analyze", variant="primary")
                 submit_cot_btn = gr.Button("Analyze with Chain-of-Thought")
@@ -262,6 +292,11 @@ with gr.Blocks(title="AI DevSecOps Advisor") as demo:
     submit_cot_btn.click(
         fn=review_finding_with_cot,
         inputs=[finding_input, session_input],
+        outputs=[output_json],
+    )
+    upload_btn.click(
+        fn=analyze_uploaded_findings,
+        inputs=[upload_source, finding_upload, session_input],
         outputs=[output_json],
     )
     clear_btn.click(

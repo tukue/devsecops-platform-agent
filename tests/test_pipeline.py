@@ -1,6 +1,7 @@
 import sys
 import os
 import json
+import tempfile
 from unittest.mock import MagicMock
 
 mock_transformers = MagicMock()
@@ -21,6 +22,7 @@ from src.ensemble import (
 from src.findings import canonicalize_finding, infer_provider
 from src.controls import resolve_control
 from src.providers import AWSProviderAdapter, GenericProviderAdapter, ProviderRouter
+from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
 
 
 # ── Input Validation Tests ──
@@ -367,6 +369,58 @@ def test_aws_regression_fixtures_preserve_classification_contract():
         assert classification["owner"] == expected["owner"]
         assert canonical["provider"] == expected["provider"]
         assert classification["validation_step"]
+
+
+def test_checkov_payload_normalizes_to_canonical_metadata():
+    records = normalize_payload("checkov", {"results": {"failed_checks": [{
+        "check_id": "CKV_AWS_1", "check_name": "S3 bucket public access", "resource": "aws_s3_bucket.logs",
+        "framework": "terraform", "check_type": "resource", "file_path": "main.tf",
+    }]}})
+    finding, metadata = records[0]
+    assert "S3 bucket" in finding
+    assert metadata["scanner"] == "Checkov"
+    assert metadata["rule_id"] == "CKV_AWS_1"
+    assert metadata["provider"] == "aws"
+
+
+def test_trivy_and_security_hub_payloads_normalize():
+    trivy = normalize_payload("trivy", {"Results": [{"Target": "Dockerfile", "Misconfigurations": [{
+        "ID": "DS001", "Title": "Container runs as root", "Description": "privileged container"
+    }]}]})
+    hub = normalize_payload("security_hub", {"Findings": [{
+        "Title": "Public S3 bucket", "GeneratorId": "aws-foundational-security-best-practices/s3-1",
+        "AwsAccountId": "123456789012", "Region": "eu-north-1",
+        "Resources": [{"Type": "AwsS3Bucket", "Id": "arn:aws:s3:::logs"}],
+    }]})
+    assert trivy[0][1]["scanner"] == "Trivy"
+    assert hub[0][1]["provider"] == "aws"
+    assert hub[0][1]["resource_id"] == "arn:aws:s3:::logs"
+
+
+def test_ingestion_rejects_invalid_or_empty_payloads():
+    try:
+        normalize_payload("unknown", {})
+        assert False, "unsupported sources must be rejected"
+    except FindingIngestionError:
+        pass
+
+
+def test_json_upload_loader_accepts_bounded_object_export():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as upload:
+        json.dump({"Results": []}, upload)
+        upload.flush()
+        assert load_json_upload(upload.name) == {"Results": []}
+
+    try:
+        load_json_upload("finding.txt")
+        assert False, "non-JSON uploads must be rejected"
+    except FindingIngestionError:
+        pass
+    try:
+        normalize_payload("trivy", {"Results": []})
+        assert False, "empty exports must be rejected"
+    except FindingIngestionError:
+        pass
 
 
 def test_severity_critical():
