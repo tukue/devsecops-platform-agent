@@ -2,8 +2,8 @@
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
+from src.providers import is_aws_finding
 
-AWS_MARKERS = ("aws", "iam", "s3", "rds", "ec2", "lambda", "security group", "cloudtrail", "ecr", "eks")
 VALID_PROVIDERS = {"aws", "azure", "gcp", "generic"}
 
 
@@ -37,8 +37,7 @@ class CanonicalFinding:
 def infer_provider(finding, provider=None):
     if provider in VALID_PROVIDERS:
         return provider
-    normalized = finding.lower()
-    return "aws" if any(marker in normalized for marker in AWS_MARKERS) else "generic"
+    return "aws" if is_aws_finding(finding) else "generic"
 
 
 def canonicalize_finding(finding: str, classification: dict[str, Any], control: dict | None, metadata=None):

@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 from unittest.mock import MagicMock
 
 mock_transformers = MagicMock()
@@ -19,6 +20,7 @@ from src.ensemble import (
 )
 from src.findings import canonicalize_finding, infer_provider
 from src.controls import resolve_control
+from src.providers import AWSProviderAdapter, GenericProviderAdapter, ProviderRouter
 
 
 # ── Input Validation Tests ──
@@ -319,6 +321,52 @@ def test_canonical_finding_contract_and_provider_inference():
 
 def test_unknown_provider_remains_generic():
     assert infer_provider("A workload has an unknown configuration") == "generic"
+
+
+def test_aws_adapter_normalizes_native_service_and_remediation():
+    adapter = AWSProviderAdapter()
+    assert adapter.can_handle("S3 bucket permits anonymous access")
+    metadata = adapter.normalize("S3 bucket permits anonymous access")
+    assert metadata["provider"] == "aws"
+    assert metadata["resource_type"] == "AWS S3"
+    assert "Block Public Access" in adapter.remediation_overlay("storage.public-access")
+
+
+def test_aws_adapter_does_not_match_service_acronyms_inside_words():
+    adapter = AWSProviderAdapter()
+    assert not adapter.can_handle("A secret was hardcoded in application code")
+
+
+def test_provider_router_uses_generic_for_unsupported_provider():
+    router = ProviderRouter()
+    adapter = router.select("Azure storage account allows anonymous access", {"provider": "azure"})
+    assert isinstance(adapter, GenericProviderAdapter)
+    assert adapter.normalize("finding", {"provider": "azure"})["provider"] == "azure"
+
+
+def test_aws_regression_fixtures_preserve_classification_contract():
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "fixtures", "aws_regression_findings.json"
+    )
+    with open(fixture_path, "r") as fixture_file:
+        fixtures = json.load(fixture_file)
+
+    classifier = EnsembleClassifier()
+    for expected in fixtures:
+        classification = classifier.classify(expected["finding"])
+        control = resolve_control(expected["finding"], classification["category"])
+        adapter = ProviderRouter().select(expected["finding"])
+        canonical = canonicalize_finding(
+            expected["finding"], classification, control,
+            adapter.normalize(expected["finding"]),
+        ).to_dict()
+
+        assert classification["category"] == expected["category"]
+        assert classification["control_id"] == expected["control_id"]
+        assert classification["severity"] == expected["severity"]
+        assert classification["owner"] == expected["owner"]
+        assert canonical["provider"] == expected["provider"]
+        assert classification["validation_step"]
 
 
 def test_severity_critical():

@@ -1,0 +1,42 @@
+[
+  {
+    "finding": "AWS IAM role has wildcard permissions with Action: * and Resource: *.",
+    "category": "IAM",
+    "control_id": "identity.least-privilege",
+    "severity": "critical",
+    "owner": "Platform Security",
+    "provider": "aws"
+  },
+  {
+    "finding": "AWS security group allows SSH from 0.0.0.0/0.",
+    "category": "Network",
+    "control_id": "network.public-ingress",
+    "severity": "critical",
+    "owner": "Cloud Platform",
+    "provider": "aws"
+  },
+  {
+    "finding": "EKS workload runs as root in a privileged container.",
+    "category": "Container",
+    "control_id": "container.privileged-workload",
+    "severity": "high",
+    "owner": "Container Platform",
+    "provider": "aws"
+  },
+  {
+    "finding": "A hardcoded secret was found in AWS application code.",
+    "category": "Secrets",
+    "control_id": "secrets.exposure",
+    "severity": "high",
+    "owner": "Platform Security",
+    "provider": "aws"
+  },
+  {
+    "finding": "S3 bucket contains customer records with no encryption.",
+    "category": "Data",
+    "control_id": "storage.public-access",
+    "severity": "high",
+    "owner": "Data Platform",
+    "provider": "aws"
+  }
+]
