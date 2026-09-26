@@ -22,6 +22,25 @@ from src.observability import (
 
 setup_logging(level="INFO", json_format=False)
 
+ANALYZE_BUTTON_CSS = """
+#analyze-button button,
+button#analyze-button {
+    background: #16a34a !important;
+    border-color: #15803d !important;
+    color: white !important;
+}
+#analyze-button button:hover,
+button#analyze-button:hover {
+    background: #15803d !important;
+    border-color: #166534 !important;
+}
+#analyze-button button:focus-visible,
+button#analyze-button:focus-visible {
+    outline: 3px solid #86efac !important;
+    outline-offset: 2px;
+}
+"""
+
 retriever = SecurityRetriever(top_k=5)
 classifier = EnsembleClassifier(confidence_threshold=0.55)
 memory = ConversationMemory(max_sessions=10)
@@ -297,6 +316,7 @@ TEST_FINDINGS = [
 with gr.Blocks(
     title="AI DevSecOps Advisor",
     theme=gr.themes.Soft(primary_hue="green", secondary_hue="emerald"),
+    css=ANALYZE_BUTTON_CSS,
 ) as demo:
     gr.Markdown("# AI DevSecOps Advisor")
     gr.Markdown(
@@ -330,7 +350,9 @@ with gr.Blocks(
                 upload_btn = gr.Button("Analyze uploaded findings")
 
             with gr.Row():
-                submit_btn = gr.Button("Analyze", variant="primary")
+                submit_btn = gr.Button(
+                    "Evaluate Finding", variant="primary", elem_id="analyze-button"
+                )
                 submit_cot_btn = gr.Button("Analyze with Chain-of-Thought")
                 clear_btn = gr.Button("Clear Session")
 
