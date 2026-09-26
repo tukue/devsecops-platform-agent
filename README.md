@@ -7,7 +7,7 @@ sdk: gradio
 python_version: "3.10"
 app_file: app.py
 fullWidth: true
-short_description: AI security classification and remediation guidance for Platform Engineering and SRE teams.
+short_description: AI security advisor for platform engineering and SRE.
 ---
 
 # Platform Engineering DevSecOps Advisor
