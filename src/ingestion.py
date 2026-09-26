@@ -2,6 +2,8 @@
 
 import json
 import os
+import stat
+import tempfile
 
 MAX_UPLOAD_BYTES = 1_000_000
 
@@ -96,16 +98,64 @@ def normalize_payload(source, payload):
 
 
 def load_json_upload(file_path):
-    """Load a bounded JSON export from Gradio's temporary upload path."""
+    """Load a bounded JSON export using safe, directory-relative file access."""
     if not isinstance(file_path, str) or not file_path.lower().endswith(".json"):
         raise FindingIngestionError("Upload a JSON finding export.")
-    if not os.path.isfile(file_path) or os.path.getsize(file_path) > MAX_UPLOAD_BYTES:
-        raise FindingIngestionError("Upload a valid JSON export smaller than 1 MB.")
+
+    temp_root = os.path.realpath(tempfile.gettempdir())
+    candidate = os.path.abspath(os.path.normpath(file_path))
     try:
-        with open(file_path, "r", encoding="utf-8") as upload_file:
-            payload = json.load(upload_file)
-    except (OSError, json.JSONDecodeError) as exc:
+        if os.path.commonpath((temp_root, candidate)) != temp_root:
+            raise FindingIngestionError("Invalid upload path.")
+    except ValueError as exc:
+        raise FindingIngestionError("Invalid upload path.") from exc
+
+    relative_path = os.path.relpath(candidate, temp_root)
+    components = relative_path.split(os.sep)
+    if not components or any(part in ("", ".", "..") for part in components):
+        raise FindingIngestionError("Invalid upload path.")
+
+    directory_fds = []
+    file_fd = None
+    try:
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        no_follow = getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(temp_root, directory_flags)
+        directory_fds.append(directory_fd)
+
+        for component in components[:-1]:
+            directory_fd = os.open(
+                component,
+                directory_flags | no_follow,
+                dir_fd=directory_fd,
+            )
+            directory_fds.append(directory_fd)
+
+        file_fd = os.open(
+            components[-1],
+            os.O_RDONLY | no_follow,
+            dir_fd=directory_fd,
+        )
+        file_info = os.fstat(file_fd)
+        if not stat.S_ISREG(file_info.st_mode) or file_info.st_size > MAX_UPLOAD_BYTES:
+            raise FindingIngestionError("Upload a valid JSON export smaller than 1 MB.")
+
+        with os.fdopen(file_fd, "rb") as upload_file:
+            file_fd = None
+            raw_payload = upload_file.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw_payload) > MAX_UPLOAD_BYTES:
+            raise FindingIngestionError("Upload a valid JSON export smaller than 1 MB.")
+        payload = json.loads(raw_payload.decode("utf-8"))
+    except FindingIngestionError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise FindingIngestionError("The uploaded file is not valid JSON.") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
     if not isinstance(payload, dict):
         raise FindingIngestionError("The uploaded JSON must be an object.")
     return payload
