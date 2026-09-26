@@ -34,7 +34,7 @@
   {
     "finding": "S3 bucket contains customer records with no encryption.",
     "category": "Data",
-    "control_id": "storage.public-access",
+    "control_id": "data.encryption-at-rest",
     "severity": "high",
     "owner": "Data Platform",
     "provider": "aws"

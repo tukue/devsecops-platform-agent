@@ -1,12 +1,14 @@
 import spaces
 import gradio as gr
 import threading
+import os
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
 from src.controls import resolve_control
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
+from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
 from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
@@ -63,7 +65,12 @@ def analyze_finding(finding, session_id=None, metadata=None):
         )
 
     with PerformanceTimer("rag_retrieval", trace_id):
-        rag_context, rag_sources = retriever.build_context(finding, top_k=5)
+        rag_context, rag_sources = retriever.build_context(
+            finding,
+            top_k=5,
+            control_id=canonical_finding.control_id,
+            provider=canonical_finding.provider,
+        )
         if rag_sources:
             for source in rag_sources:
                 record_rag_retrieval(source.get("relevance", 0))
@@ -85,6 +92,46 @@ def analyze_finding(finding, session_id=None, metadata=None):
     provider_overlay = adapter.remediation_overlay(classification["control_id"])
     if provider_overlay:
         recommendation += f"\n\nAWS implementation guidance: {provider_overlay}"
+
+    primary_source = rag_sources[0] if rag_sources else {}
+    validation_step = primary_source.get(
+        "validation", classification["validation_step"]
+    )
+    rollback_guidance = primary_source.get(
+        "rollback_guidance",
+        "Check dependent services and use a reviewed change with a documented rollback plan.",
+    )
+    evidence = list(canonical_finding.evidence)
+    risk_summary = (
+        f"{classification['severity'].capitalize()} severity {classification['category']} "
+        f"finding for control {canonical_finding.control_id} "
+        f"(confidence {classification['confidence']:.0%})."
+    )
+    citations = [
+        {
+            "id": source["id"],
+            "title": source["title"],
+            "source": source["source_name"],
+            "version": source["source_version"],
+            "references": source["references"],
+        }
+        for source in rag_sources
+    ]
+
+    recommendation += (
+        f"\n\nRisk: {risk_summary}"
+        f"\nEvidence: {'; '.join(evidence)}"
+        f"\nOwner: {classification.get('owner', OWNERS.get(classification['category'], 'Platform Security'))}"
+        f"\nValidation: {validation_step}"
+        f"\nRollback and dependencies: {rollback_guidance}"
+    )
+    if citations:
+        citation_text = "; ".join(
+            f"[{citation['id']}] {citation['source']} v{citation['version']}: "
+            f"{', '.join(citation['references']) or 'reference unavailable'}"
+            for citation in citations
+        )
+        recommendation += f"\nSources: {citation_text}"
 
     if rag_context:
         recommendation += f"\n\nKnowledge base guidance:\n{rag_context}"
@@ -120,7 +167,11 @@ def analyze_finding(finding, session_id=None, metadata=None):
         "ensemble_agreement": classification.get("ensemble_agreement", True),
         "recommendation": recommendation,
         "owner": classification.get("owner", OWNERS.get(classification["category"], "Platform Security")),
-        "validation_step": classification["validation_step"],
+        "risk_summary": risk_summary,
+        "evidence": evidence,
+        "validation_step": validation_step,
+        "rollback_guidance": rollback_guidance,
+        "citations": citations,
         "finding": canonical_finding.to_dict(),
         "human_review_required": classification["severity"] in {"high", "critical"} or classification["confidence"] < 0.60,
         "automation_allowed": False,
@@ -159,6 +210,22 @@ def analyze_uploaded_findings(source, upload, session_id=None):
         results = analyze_ingested_findings(source, payload, session_id)
         return {"source": source, "finding_count": len(results), "results": results}
     except FindingIngestionError as exc:
+        return {"error": str(exc)}
+
+
+def create_github_draft_issue(assessment, repository):
+    try:
+        return GitHubWorkflowClient(repository).create_draft_issue(assessment)
+    except GitHubWorkflowError as exc:
+        return {"error": str(exc)}
+
+
+def comment_on_github_pr(assessment, repository, pull_request):
+    try:
+        return GitHubWorkflowClient(repository).comment_on_pull_request(
+            pull_request, assessment
+        )
+    except GitHubWorkflowError as exc:
         return {"error": str(exc)}
 
 
@@ -227,7 +294,10 @@ TEST_FINDINGS = [
     ("The storage bucket contains customer records with no encryption.", "Data"),
 ]
 
-with gr.Blocks(title="AI DevSecOps Advisor") as demo:
+with gr.Blocks(
+    title="AI DevSecOps Advisor",
+    theme=gr.themes.Soft(primary_hue="green", secondary_hue="emerald"),
+) as demo:
     gr.Markdown("# AI DevSecOps Advisor")
     gr.Markdown(
         "Classifies infrastructure risks with RAG, multi-model ensemble, "
@@ -280,9 +350,31 @@ with gr.Blocks(title="AI DevSecOps Advisor") as demo:
             reset_btn = gr.Button("Reset Metrics")
         observability_output = gr.JSON(label="Metrics / Health")
 
+    with gr.Accordion("GitHub workflow handoff", open=False):
+        gr.Markdown("Creates a draft issue or an advisory PR comment. Set `GITHUB_TOKEN` in the app environment.")
+        github_repository = gr.Textbox(
+            label="GitHub repository (owner/repository)",
+            value=os.getenv("GITHUB_REPOSITORY", ""),
+        )
+        pull_request_number = gr.Number(label="Pull request number", precision=0)
+        with gr.Row():
+            draft_issue_btn = gr.Button("Create draft issue from assessment")
+            pr_comment_btn = gr.Button("Comment on pull request")
+        workflow_output = gr.JSON(label="GitHub handoff result")
+
     metrics_btn.click(fn=get_observability_metrics, outputs=[observability_output])
     health_btn.click(fn=get_system_health, outputs=[observability_output])
     reset_btn.click(fn=reset_observability_metrics, outputs=[observability_output])
+    draft_issue_btn.click(
+        fn=create_github_draft_issue,
+        inputs=[output_json, github_repository],
+        outputs=[workflow_output],
+    )
+    pr_comment_btn.click(
+        fn=comment_on_github_pr,
+        inputs=[output_json, github_repository, pull_request_number],
+        outputs=[workflow_output],
+    )
 
     submit_btn.click(
         fn=review_finding,
