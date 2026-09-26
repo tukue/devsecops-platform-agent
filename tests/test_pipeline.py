@@ -23,6 +23,7 @@ from src.findings import canonicalize_finding, infer_provider
 from src.controls import resolve_control
 from src.providers import AWSProviderAdapter, GenericProviderAdapter, ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
+from src.github_workflow import GitHubWorkflowClient, build_work_item, finding_fingerprint
 
 
 # ── Input Validation Tests ──
@@ -272,6 +273,101 @@ def test_retriever_hybrid_search():
     assert results[0]["category"] == "Secrets"
 
 
+def test_control_and_provider_aware_retrieval_returns_citations_and_safety_guidance():
+    r = SecurityRetriever(top_k=3)
+    context, sources = r.build_context(
+        "S3 bucket stores customer records without encryption",
+        control_id="data.encryption-at-rest",
+        provider="aws",
+    )
+    assert sources[0]["id"] == "DAT-001"
+    assert sources[0]["provider"] == "aws"
+    assert sources[0]["source_version"]
+    assert sources[0]["references"]
+    assert "Validation:" in context
+    assert "Rollback/dependencies:" in context
+    assert "Citation:" in context
+
+
+def test_retrieval_benchmark_meets_recall_at_3_and_precision_at_3():
+    benchmark = [
+        ("IAM role wildcard permissions", "identity.least-privilege", "aws", {"IAM-001"}),
+        ("IAM trust policy allows unknown accounts", "identity.access-management", "aws", {"IAM-003"}),
+        ("security group allows SSH from 0.0.0.0/0", "network.public-ingress", "aws", {"NET-001"}),
+        ("internet facing ALB missing WAF", "network.public-ingress", "aws", {"NET-002"}),
+        ("production and staging share VPC with no network policy", "network.segmentation", "aws", {"NET-003", "NET-004"}),
+        ("Kubernetes container runs as root and privileged", "container.privileged-workload", "generic", {"CTR-001"}),
+        ("database password hardcoded in git repository", "secrets.exposure", "aws", {"SEC-001", "SEC-002"}),
+        ("S3 bucket customer records no encryption", "data.encryption-at-rest", "aws", {"DAT-001"}),
+        ("RDS instance stores data without encryption", "data.encryption-at-rest", "aws", {"DAT-002"}),
+        ("RDS database has no backup retention policy", "data.backup-protection", "aws", {"DAT-003"}),
+        ("HTTP service traffic has no TLS", "data.encryption-in-transit", "aws", {"DAT-004"}),
+        ("Route53 DNS zone missing DNSSEC", "network.dns-security", "aws", {"NET-005"}),
+    ]
+    retriever = SecurityRetriever(top_k=3)
+    relevant_total = retrieved_relevant = retrieved_documents = 0
+    for query, control, provider, relevant_ids in benchmark:
+        results = retriever.retrieve(query, top_k=3, control_id=control, provider=provider)
+        relevant_total += len(relevant_ids)
+        retrieved_relevant += sum(item["id"] in relevant_ids for item in results)
+        retrieved_documents += len(results)
+
+    assert retrieved_relevant / relevant_total >= 0.90
+    assert retrieved_relevant / retrieved_documents >= 0.35
+
+
+def test_github_work_item_contains_reviewable_evidence_and_is_fingerprint_deduplicated():
+    assessment = {
+        "control_id": "network.public-ingress",
+        "severity": "critical",
+        "confidence": 0.99,
+        "owner": "Cloud Platform",
+        "human_review_required": True,
+        "evidence": ["Security group allows SSH from 0.0.0.0/0"],
+        "recommendation": "Restrict ingress using reviewed IaC.",
+        "validation_step": "Confirm only trusted CIDRs remain.",
+        "rollback_guidance": "Keep approved management access available.",
+        "citations": [{"id": "NET-001", "source": "EC2 guide", "version": "1.0", "references": ["https://example.test/guide"]}],
+        "finding": {"provider": "aws", "resource_id": "sg-123", "evidence": ["SSH open"]},
+    }
+    fingerprint, title, body = build_work_item(assessment)
+    assert fingerprint == finding_fingerprint(assessment)
+    assert title.startswith("[Agent draft] CRITICAL")
+    assert "Cloud Platform" in body
+    assert "Rollback and dependencies" in body
+    assert "NET-001" in body
+    assert "no source code or infrastructure was modified" in body
+
+
+def test_github_duplicate_issue_is_reused_without_posting():
+    assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
+    fingerprint, _, body = build_work_item(assessment)
+    client = GitHubWorkflowClient("org/repo", token="test")
+    client._open_issues = lambda: [{"number": 7, "html_url": "https://github.test/7", "body": body}]
+    client._request = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate must not POST"))
+    result = client.create_draft_issue(assessment)
+    assert result == {"status": "existing", "number": 7, "url": "https://github.test/7"}
+
+
+def test_github_duplicate_pr_comment_is_reused(monkeypatch):
+    assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
+    fingerprint, _, body = build_work_item(assessment)
+    client = GitHubWorkflowClient("org/repo", token="test")
+    calls = []
+
+    def request(method, path, payload=None):
+        calls.append((method, path))
+        if path.endswith("/pulls/4"):
+            return {"number": 4}
+        if "/comments?" in path:
+            return [{"body": body, "html_url": "https://github.test/comment/1"}]
+        raise AssertionError("duplicate comment must not POST")
+
+    client._request = request
+    result = client.comment_on_pull_request(4, assessment)
+    assert result == {"status": "existing", "url": "https://github.test/comment/1"}
+
+
 # ── Ensemble Classifier Tests ──
 
 def test_rule_based_classification():
@@ -304,7 +400,7 @@ def test_control_ids_preserve_existing_categories():
     assert determine_control("Security group allows SSH from 0.0.0.0/0") == "network.public-ingress"
     assert determine_control("Kubernetes pod runs as root in privileged mode") == "container.privileged-workload"
     assert determine_control("Hardcoded secret password in application code") == "secrets.exposure"
-    assert determine_control("S3 bucket has customer records with no encryption") == "storage.public-access"
+    assert determine_control("S3 bucket has customer records with no encryption") == "data.encryption-at-rest"
 
 
 def test_canonical_finding_contract_and_provider_inference():

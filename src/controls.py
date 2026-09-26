@@ -37,6 +37,13 @@ CONTROL_TAXONOMY = (
         "validation": "Verify network segmentation and firewall rules match the approved design.",
     },
     {
+        "id": "network.dns-security",
+        "category": "Network",
+        "owner": "Cloud Platform",
+        "signals": ("dnssec", "dns resolution", "dns over udp"),
+        "validation": "Verify DNSSEC signing and validate responses with a DNSSEC-aware resolver.",
+    },
+    {
         "id": "container.privileged-workload",
         "category": "Container",
         "owner": "Container Platform",
@@ -58,10 +65,17 @@ CONTROL_TAXONOMY = (
         "validation": "Confirm the secret is revoked or rotated and no longer appears in source or runtime configuration.",
     },
     {
+        "id": "secrets.rotation",
+        "category": "Secrets",
+        "owner": "Platform Security",
+        "signals": ("secret rotation", "rotate secrets", "no rotation", "stale credentials"),
+        "validation": "Confirm rotation succeeds and dependent services use the current secret.",
+    },
+    {
         "id": "storage.public-access",
         "category": "Data",
         "owner": "Data Platform",
-        "signals": ("storage bucket", "s3 bucket", "public bucket", "anonymous access"),
+        "signals": ("public s3 bucket", "public bucket", "anonymous access", "public access", "publicly accessible bucket"),
         "validation": "Confirm public access is removed and approved consumers retain only required access.",
     },
     {
@@ -70,6 +84,20 @@ CONTROL_TAXONOMY = (
         "owner": "Data Platform",
         "signals": ("unencrypted", "no encryption", "encryption", "database", "rds"),
         "validation": "Confirm encryption at rest is enabled and the approved key-management policy is applied.",
+    },
+    {
+        "id": "data.encryption-in-transit",
+        "category": "Data",
+        "owner": "Data Platform",
+        "signals": ("http instead of https", "unencrypted channel", "tls", "https", "encryption in transit"),
+        "validation": "Verify TLS negotiation, certificate validity, and service health over the encrypted path.",
+    },
+    {
+        "id": "data.backup-protection",
+        "category": "Data",
+        "owner": "Data Platform",
+        "signals": ("backup retention", "backup retention policy", "restore procedures"),
+        "validation": "Verify backup retention settings and perform a scheduled restore test.",
     },
     {
         "id": "data.protection",

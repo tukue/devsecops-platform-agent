@@ -136,10 +136,26 @@ class SecurityRetriever:
 
         return combined
 
-    def _rerank(self, query, candidates, top_k=None):
+    def _rerank(self, query, candidates, top_k=None, control_id=None, provider=None):
         k = top_k or self.top_k
         if not candidates:
             return []
+
+        if control_id:
+            control_candidates = [
+                (idx, score) for idx, score in candidates
+                if self.mappings[idx].get("control_id") == control_id
+            ]
+            if control_candidates:
+                candidates = control_candidates
+
+        if provider:
+            compatible_candidates = [
+                (idx, score) for idx, score in candidates
+                if self.mappings[idx].get("provider", "generic") in (provider, "generic")
+            ]
+            if compatible_candidates:
+                candidates = compatible_candidates
 
         query_lower = _preprocess(query)
         reranked = []
@@ -147,6 +163,18 @@ class SecurityRetriever:
         for idx, base_score in candidates:
             entry = self.mappings[idx]
             boosted_score = base_score
+
+            control_match = bool(control_id and entry.get("control_id") == control_id)
+            entry_provider = entry.get("provider", "generic")
+            provider_match = bool(provider and entry_provider == provider)
+            provider_compatible = not provider or entry_provider in (provider, "generic")
+
+            if control_match:
+                boosted_score *= 2.0
+            if provider_match:
+                boosted_score *= 1.25
+            elif provider and not provider_compatible:
+                boosted_score *= 0.5
 
             if entry["category"].lower() in query_lower:
                 boosted_score *= 1.3
@@ -160,16 +188,18 @@ class SecurityRetriever:
             if overlap:
                 boosted_score *= (1 + 0.1 * len(overlap))
 
-            reranked.append((idx, boosted_score))
+            reranked.append((idx, boosted_score, control_match, provider_match))
 
-        reranked.sort(key=lambda x: x[1], reverse=True)
-        return reranked[:k]
+        reranked.sort(key=lambda x: (x[2], x[3], x[1]), reverse=True)
+        return [(idx, score) for idx, score, _, _ in reranked[:k]]
 
-    def retrieve(self, query, top_k=None):
+    def retrieve(self, query, top_k=None, control_id=None, provider=None):
         k = top_k or self.top_k
         combined = self._hybrid_score(query)
         ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-        reranked = self._rerank(query, ranked, top_k=k)
+        reranked = self._rerank(
+            query, ranked, top_k=k, control_id=control_id, provider=provider
+        )
 
         results = []
         seen = set()
@@ -182,24 +212,40 @@ class SecurityRetriever:
 
         return results
 
-    def build_context(self, query, top_k=None):
-        results = self.retrieve(query, top_k)
+    def build_context(self, query, top_k=None, control_id=None, provider=None):
+        results = self.retrieve(query, top_k, control_id=control_id, provider=provider)
         if not results:
             return "", []
 
         context_parts = []
         sources = []
         for i, r in enumerate(results, 1):
+            references = r.get("references", [])
+            citation = "; ".join(references) if references else "Source reference unavailable"
             context_parts.append(
-                f"[{i}] {r['title']} (Category: {r['category']}, Severity: {r['severity']})\n"
+                f"[{i}] {r['title']} (Category: {r['category']}, Severity: {r['severity']}, "
+                f"Control: {r.get('control_id', 'unclassified')}, Provider: {r.get('provider', 'generic')})\n"
                 f"    Finding: {r['finding']}\n"
-                f"    Remediation: {r['remediation']}"
+                f"    Remediation: {r['remediation']}\n"
+                f"    Validation: {r.get('validation', 'Review with the owning team.')}\n"
+                f"    Rollback/dependencies: {r.get('rollback_guidance', 'Validate dependencies and prepare a rollback plan before changes.')}\n"
+                f"    Citation: {r.get('source_name', r['title'])} v{r.get('source_version', 'unspecified')} ({citation})"
             )
             sources.append({
                 "id": r["id"],
                 "title": r["title"],
                 "category": r["category"],
                 "relevance": r["relevance_score"],
+                "control_id": r.get("control_id", "unclassified"),
+                "provider": r.get("provider", "generic"),
+                "source_name": r.get("source_name", r["title"]),
+                "source_version": r.get("source_version", "unspecified"),
+                "references": references,
+                "validation": r.get("validation", "Review with the owning team."),
+                "rollback_guidance": r.get(
+                    "rollback_guidance",
+                    "Validate dependencies and prepare a rollback plan before changes.",
+                ),
             })
 
         return "\n\n".join(context_parts), sources
