@@ -1,6 +1,7 @@
 from transformers import pipeline
 import logging
 import threading
+from src.controls import resolve_control
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,12 @@ def determine_category(finding):
         if any(signal in normalized for signal in signals):
             return category
     return None
+
+
+def determine_control(finding, category=None):
+    """Return a stable control identifier while preserving legacy categories."""
+    resolved = resolve_control(finding, category or determine_category(finding))
+    return resolved["id"] if resolved else "unclassified"
 
 
 class EnsembleClassifier:
@@ -186,8 +193,12 @@ class EnsembleClassifier:
         severity = determine_severity(finding)
 
         if rule_category:
+            control = resolve_control(finding, rule_category)
             return {
                 "category": rule_category,
+                "control_id": control["id"] if control else "unclassified",
+                "owner": control["owner"] if control else OWNERS[rule_category],
+                "validation_step": control["validation"] if control else "Review the finding with the owning team.",
                 "severity": severity,
                 "confidence": 1.0,
                 "method": "rule_match",
@@ -199,8 +210,12 @@ class EnsembleClassifier:
 
         agreement = len(set(r["category"] for r in ensemble["model_results"])) == 1
 
+        control = resolve_control(finding, ensemble["category"])
         return {
             "category": ensemble["category"],
+            "control_id": control["id"] if control else "unclassified",
+            "owner": control["owner"] if control else OWNERS.get(ensemble["category"], "Platform Security"),
+            "validation_step": control["validation"] if control else "Review the finding with the owning team.",
             "severity": severity,
             "confidence": ensemble["confidence"],
             "method": ensemble["method"],

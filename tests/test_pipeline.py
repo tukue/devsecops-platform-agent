@@ -1,5 +1,7 @@
 import sys
 import os
+import json
+import tempfile
 from unittest.mock import MagicMock
 
 mock_transformers = MagicMock()
@@ -15,8 +17,13 @@ from src.memory import ConversationMemory
 from src.chain_of_thought import generate_chain_of_thought
 from src.ensemble import (
     EnsembleClassifier, determine_category, determine_severity,
-    CATEGORY_RULES, SEVERITY_RULES, REMEDIATIONS, OWNERS,
+    determine_control, CATEGORY_RULES, SEVERITY_RULES, REMEDIATIONS, OWNERS,
 )
+from src.findings import canonicalize_finding, infer_provider
+from src.controls import resolve_control
+from src.providers import AWSProviderAdapter, GenericProviderAdapter, ProviderRouter
+from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
+from src.github_workflow import GitHubWorkflowClient, build_work_item, finding_fingerprint
 
 
 # ── Input Validation Tests ──
@@ -266,6 +273,101 @@ def test_retriever_hybrid_search():
     assert results[0]["category"] == "Secrets"
 
 
+def test_control_and_provider_aware_retrieval_returns_citations_and_safety_guidance():
+    r = SecurityRetriever(top_k=3)
+    context, sources = r.build_context(
+        "S3 bucket stores customer records without encryption",
+        control_id="data.encryption-at-rest",
+        provider="aws",
+    )
+    assert sources[0]["id"] == "DAT-001"
+    assert sources[0]["provider"] == "aws"
+    assert sources[0]["source_version"]
+    assert sources[0]["references"]
+    assert "Validation:" in context
+    assert "Rollback/dependencies:" in context
+    assert "Citation:" in context
+
+
+def test_retrieval_benchmark_meets_recall_at_3_and_precision_at_3():
+    benchmark = [
+        ("IAM role wildcard permissions", "identity.least-privilege", "aws", {"IAM-001"}),
+        ("IAM trust policy allows unknown accounts", "identity.access-management", "aws", {"IAM-003"}),
+        ("security group allows SSH from 0.0.0.0/0", "network.public-ingress", "aws", {"NET-001"}),
+        ("internet facing ALB missing WAF", "network.public-ingress", "aws", {"NET-002"}),
+        ("production and staging share VPC with no network policy", "network.segmentation", "aws", {"NET-003", "NET-004"}),
+        ("Kubernetes container runs as root and privileged", "container.privileged-workload", "generic", {"CTR-001"}),
+        ("database password hardcoded in git repository", "secrets.exposure", "aws", {"SEC-001", "SEC-002"}),
+        ("S3 bucket customer records no encryption", "data.encryption-at-rest", "aws", {"DAT-001"}),
+        ("RDS instance stores data without encryption", "data.encryption-at-rest", "aws", {"DAT-002"}),
+        ("RDS database has no backup retention policy", "data.backup-protection", "aws", {"DAT-003"}),
+        ("HTTP service traffic has no TLS", "data.encryption-in-transit", "aws", {"DAT-004"}),
+        ("Route53 DNS zone missing DNSSEC", "network.dns-security", "aws", {"NET-005"}),
+    ]
+    retriever = SecurityRetriever(top_k=3)
+    relevant_total = retrieved_relevant = retrieved_documents = 0
+    for query, control, provider, relevant_ids in benchmark:
+        results = retriever.retrieve(query, top_k=3, control_id=control, provider=provider)
+        relevant_total += len(relevant_ids)
+        retrieved_relevant += sum(item["id"] in relevant_ids for item in results)
+        retrieved_documents += len(results)
+
+    assert retrieved_relevant / relevant_total >= 0.90
+    assert retrieved_relevant / retrieved_documents >= 0.35
+
+
+def test_github_work_item_contains_reviewable_evidence_and_is_fingerprint_deduplicated():
+    assessment = {
+        "control_id": "network.public-ingress",
+        "severity": "critical",
+        "confidence": 0.99,
+        "owner": "Cloud Platform",
+        "human_review_required": True,
+        "evidence": ["Security group allows SSH from 0.0.0.0/0"],
+        "recommendation": "Restrict ingress using reviewed IaC.",
+        "validation_step": "Confirm only trusted CIDRs remain.",
+        "rollback_guidance": "Keep approved management access available.",
+        "citations": [{"id": "NET-001", "source": "EC2 guide", "version": "1.0", "references": ["https://example.test/guide"]}],
+        "finding": {"provider": "aws", "resource_id": "sg-123", "evidence": ["SSH open"]},
+    }
+    fingerprint, title, body = build_work_item(assessment)
+    assert fingerprint == finding_fingerprint(assessment)
+    assert title.startswith("[Agent draft] CRITICAL")
+    assert "Cloud Platform" in body
+    assert "Rollback and dependencies" in body
+    assert "NET-001" in body
+    assert "no source code or infrastructure was modified" in body
+
+
+def test_github_duplicate_issue_is_reused_without_posting():
+    assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
+    fingerprint, _, body = build_work_item(assessment)
+    client = GitHubWorkflowClient("org/repo", token="test")
+    client._open_issues = lambda: [{"number": 7, "html_url": "https://github.test/7", "body": body}]
+    client._request = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate must not POST"))
+    result = client.create_draft_issue(assessment)
+    assert result == {"status": "existing", "number": 7, "url": "https://github.test/7"}
+
+
+def test_github_duplicate_pr_comment_is_reused(monkeypatch):
+    assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
+    fingerprint, _, body = build_work_item(assessment)
+    client = GitHubWorkflowClient("org/repo", token="test")
+    calls = []
+
+    def request(method, path, payload=None):
+        calls.append((method, path))
+        if path.endswith("/pulls/4"):
+            return {"number": 4}
+        if "/comments?" in path:
+            return [{"body": body, "html_url": "https://github.test/comment/1"}]
+        raise AssertionError("duplicate comment must not POST")
+
+    client._request = request
+    result = client.comment_on_pull_request(4, assessment)
+    assert result == {"status": "existing", "url": "https://github.test/comment/1"}
+
+
 # ── Ensemble Classifier Tests ──
 
 def test_rule_based_classification():
@@ -291,6 +393,130 @@ def test_rule_based_secrets():
 def test_rule_based_data():
     category = determine_category("S3 bucket has customer records with no encryption")
     assert category == "Data"
+
+
+def test_control_ids_preserve_existing_categories():
+    assert determine_control("The IAM role has wildcard permissions") == "identity.least-privilege"
+    assert determine_control("Security group allows SSH from 0.0.0.0/0") == "network.public-ingress"
+    assert determine_control("Kubernetes pod runs as root in privileged mode") == "container.privileged-workload"
+    assert determine_control("Hardcoded secret password in application code") == "secrets.exposure"
+    assert determine_control("S3 bucket has customer records with no encryption") == "data.encryption-at-rest"
+
+
+def test_canonical_finding_contract_and_provider_inference():
+    classifier = EnsembleClassifier()
+    classification = classifier.classify("AWS IAM role has wildcard permissions")
+    control = resolve_control("AWS IAM role has wildcard permissions", classification["category"])
+    finding = canonicalize_finding(
+        "AWS IAM role has wildcard permissions", classification, control,
+        {"account": "123456789012", "region": "eu-north-1", "scanner": "Security Hub"},
+    ).to_dict()
+    assert finding["provider"] == "aws"
+    assert finding["control_id"] == "identity.least-privilege"
+    assert finding["account"] == "123456789012"
+    assert finding["evidence"]
+
+
+def test_unknown_provider_remains_generic():
+    assert infer_provider("A workload has an unknown configuration") == "generic"
+
+
+def test_aws_adapter_normalizes_native_service_and_remediation():
+    adapter = AWSProviderAdapter()
+    assert adapter.can_handle("S3 bucket permits anonymous access")
+    metadata = adapter.normalize("S3 bucket permits anonymous access")
+    assert metadata["provider"] == "aws"
+    assert metadata["resource_type"] == "AWS S3"
+    assert "Block Public Access" in adapter.remediation_overlay("storage.public-access")
+
+
+def test_aws_adapter_does_not_match_service_acronyms_inside_words():
+    adapter = AWSProviderAdapter()
+    assert not adapter.can_handle("A secret was hardcoded in application code")
+
+
+def test_provider_router_uses_generic_for_unsupported_provider():
+    router = ProviderRouter()
+    adapter = router.select("Azure storage account allows anonymous access", {"provider": "azure"})
+    assert isinstance(adapter, GenericProviderAdapter)
+    assert adapter.normalize("finding", {"provider": "azure"})["provider"] == "azure"
+
+
+def test_aws_regression_fixtures_preserve_classification_contract():
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "fixtures", "aws_regression_findings.json"
+    )
+    with open(fixture_path, "r") as fixture_file:
+        fixtures = json.load(fixture_file)
+
+    classifier = EnsembleClassifier()
+    for expected in fixtures:
+        classification = classifier.classify(expected["finding"])
+        control = resolve_control(expected["finding"], classification["category"])
+        adapter = ProviderRouter().select(expected["finding"])
+        canonical = canonicalize_finding(
+            expected["finding"], classification, control,
+            adapter.normalize(expected["finding"]),
+        ).to_dict()
+
+        assert classification["category"] == expected["category"]
+        assert classification["control_id"] == expected["control_id"]
+        assert classification["severity"] == expected["severity"]
+        assert classification["owner"] == expected["owner"]
+        assert canonical["provider"] == expected["provider"]
+        assert classification["validation_step"]
+
+
+def test_checkov_payload_normalizes_to_canonical_metadata():
+    records = normalize_payload("checkov", {"results": {"failed_checks": [{
+        "check_id": "CKV_AWS_1", "check_name": "S3 bucket public access", "resource": "aws_s3_bucket.logs",
+        "framework": "terraform", "check_type": "resource", "file_path": "main.tf",
+    }]}})
+    finding, metadata = records[0]
+    assert "S3 bucket" in finding
+    assert metadata["scanner"] == "Checkov"
+    assert metadata["rule_id"] == "CKV_AWS_1"
+    assert metadata["provider"] == "aws"
+
+
+def test_trivy_and_security_hub_payloads_normalize():
+    trivy = normalize_payload("trivy", {"Results": [{"Target": "Dockerfile", "Misconfigurations": [{
+        "ID": "DS001", "Title": "Container runs as root", "Description": "privileged container"
+    }]}]})
+    hub = normalize_payload("security_hub", {"Findings": [{
+        "Title": "Public S3 bucket", "GeneratorId": "aws-foundational-security-best-practices/s3-1",
+        "AwsAccountId": "123456789012", "Region": "eu-north-1",
+        "Resources": [{"Type": "AwsS3Bucket", "Id": "arn:aws:s3:::logs"}],
+    }]})
+    assert trivy[0][1]["scanner"] == "Trivy"
+    assert hub[0][1]["provider"] == "aws"
+    assert hub[0][1]["resource_id"] == "arn:aws:s3:::logs"
+
+
+def test_ingestion_rejects_invalid_or_empty_payloads():
+    try:
+        normalize_payload("unknown", {})
+        assert False, "unsupported sources must be rejected"
+    except FindingIngestionError:
+        pass
+
+
+def test_json_upload_loader_accepts_bounded_object_export():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as upload:
+        json.dump({"Results": []}, upload)
+        upload.flush()
+        assert load_json_upload(upload.name) == {"Results": []}
+
+    try:
+        load_json_upload("finding.txt")
+        assert False, "non-JSON uploads must be rejected"
+    except FindingIngestionError:
+        pass
+    try:
+        normalize_payload("trivy", {"Results": []})
+        assert False, "empty exports must be rejected"
+    except FindingIngestionError:
+        pass
 
 
 def test_severity_critical():
