@@ -110,10 +110,6 @@ def analyze_finding(finding, session_id=None):
         if first_source:
             rec_source_citation = f"\n\nSource Citation: {first_source['id']} - {first_source['title']} ({first_source.get('provider', 'N/A')})"
 
-    risk_summary = memory.get_risk_summary(session_id)
-    if risk_summary:
-        result["session_risk_summary"] = risk_summary
-
     result = {
         "category": classification["category"],
         "severity": classification["severity"],
@@ -139,6 +135,10 @@ def analyze_finding(finding, session_id=None):
         "source_citation": rec_source_citation,
     }
 
+    risk_summary = memory.get_risk_summary(session_id)
+    if risk_summary:
+        result["session_risk_summary"] = risk_summary
+
     if warnings:
         result["input_warnings"] = warnings
 
@@ -146,10 +146,6 @@ def analyze_finding(finding, session_id=None):
         result["output_warnings"] = filtered["issues"]
 
     memory.add_interaction(session_id, finding, result)
-
-    risk_summary = memory.get_risk_summary(session_id)
-    if risk_summary:
-        result["session_risk_summary"] = risk_summary
 
     return result
 
