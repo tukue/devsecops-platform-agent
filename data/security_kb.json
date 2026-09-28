@@ -7,7 +7,11 @@
     "severity": "critical",
     "remediation": "Apply least privilege principle. Replace wildcard permissions with specific actions and resources required for the workload. Use IAM Access Analyzer to identify unused permissions.",
     "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html"],
-    "keywords": ["iam", "wildcard", "permission", "role", "aws", "least privilege"]
+    "keywords": ["iam", "wildcard", "permission", "role", "aws", "least privilege"],
+    "provider": "aws",
+    "control": "IAM-001",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "IAM-002",
@@ -17,7 +21,11 @@
     "severity": "high",
     "remediation": "Enable MFA for all privileged accounts. Use hardware tokens for root accounts. Enforce MFA through IAM policies.",
     "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_mfa.html"],
-    "keywords": ["mfa", "multi-factor", "authentication", "privileged", "admin", "root"]
+    "keywords": ["mfa", "multi-factor", "authentication", "privileged", "admin", "root"],
+    "provider": "aws",
+    "control": "IAM-002",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "IAM-003",
@@ -27,7 +35,11 @@
     "severity": "high",
     "remediation": "Restrict the trust policy to specific, known AWS accounts and roles. Remove cross-account access that is not explicitly required.",
     "references": ["https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_manage_modify.html"],
-    "keywords": ["trust policy", "cross-account", "assume role", "sts"]
+    "keywords": ["trust policy", "cross-account", "assume role", "sts"],
+    "provider": "aws",
+    "control": "IAM-003",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "NET-001",
@@ -37,7 +49,11 @@
     "severity": "critical",
     "remediation": "Restrict SSH access to approved bastion hosts or VPN CIDRs. Use Systems Manager Session Manager for shell access instead of open SSH.",
     "references": ["https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/authorizing-access-to-an-instance.html"],
-    "keywords": ["ssh", "security group", "0.0.0.0/0", "ingress", "bastion"]
+    "keywords": ["ssh", "security group", "0.0.0.0/0", "ingress", "bastion"],
+    "provider": "aws",
+    "control": "NET-001",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "NET-002",
@@ -47,7 +63,11 @@
     "severity": "high",
     "remediation": "Attach AWS WAF to the ALB. Configure rules for common web exploits, rate limiting, and IP reputation. Review WAF logs regularly.",
     "references": ["https://docs.aws.amazon.com/waf/latest/developerguide/waf-chapter-managing-rules.html"],
-    "keywords": ["load balancer", "alb", "waf", "web application firewall", "public"]
+    "keywords": ["load balancer", "alb", "waf", "web application firewall", "public"],
+    "provider": "aws",
+    "control": "NET-002",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "NET-003",
@@ -57,7 +77,11 @@
     "severity": "medium",
     "remediation": "Separate environments into distinct subnets and VPCs. Apply security groups and NACLs to restrict cross-environment traffic.",
     "references": ["https://docs.aws.amazon.com/vpc/latest/userguide/VPC_Security.html"],
-    "keywords": ["segmentation", "vpc", "subnet", "network policy", "staging", "production"]
+    "keywords": ["segmentation", "vpc", "subnet", "network policy", "staging", "production"],
+    "provider": "aws",
+    "control": "NET-003",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "NET-004",
@@ -67,7 +91,11 @@
     "severity": "high",
     "remediation": "Apply Kubernetes NetworkPolicies to restrict ingress and egress. Use an internal load balancer or ingress controller with authentication.",
     "references": ["https://kubernetes.io/docs/concepts/services-networking/network-policies/"],
-    "keywords": ["kubernetes", "service", "loadbalancer", "network policy", "ingress"]
+    "keywords": ["kubernetes", "service", "loadbalancer", "network policy", "ingress"],
+    "provider": "k8s",
+    "control": "NET-004",
+    "source": "kubernetes-security",
+    "version": "1.2"
   },
   {
     "id": "CTR-001",
@@ -77,7 +105,11 @@
     "severity": "critical",
     "remediation": "Set runAsNonRoot: true, drop all capabilities, and remove privileged: true. Use a minimal base image and scan for vulnerabilities in CI.",
     "references": ["https://kubernetes.io/docs/concepts/security/pod-security-standards/"],
-    "keywords": ["container", "privileged", "root", "kubernetes", "pod", "security context"]
+    "keywords": ["container", "privileged", "root", "kubernetes", "pod", "security context"],
+    "provider": "k8s",
+    "control": "CTR-001",
+    "source": "kubernetes-security",
+    "version": "1.2"
   },
   {
     "id": "CTR-002",
@@ -87,7 +119,11 @@
     "severity": "high",
     "remediation": "Integrate image scanning (Trivy, Grype, ECR scanning) into CI/CD. Block deployment of images with critical or high vulnerabilities.",
     "references": ["https://trivy.dev/latest/"],
-    "keywords": ["image", "vulnerability", "scan", "trivy", "grype", "ci/cd"]
+    "keywords": ["image", "vulnerability", "scan", "trivy", "grype", "ci/cd"],
+    "provider": "k8s",
+    "control": "CTR-002",
+    "source": "kubernetes-security",
+    "version": "1.2"
   },
   {
     "id": "CTR-003",
@@ -97,7 +133,11 @@
     "severity": "medium",
     "remediation": "Pin images to specific version tags or digests. Use immutable tags and maintain a base image update process.",
     "references": ["https://docs.docker.com/develop/develop-images/dockerfile_best-practices/"],
-    "keywords": ["container", "image", "latest tag", "mutable", "docker"]
+    "keywords": ["container", "image", "latest tag", "mutable", "docker"],
+    "provider": "k8s",
+    "control": "CTR-003",
+    "source": "kubernetes-security",
+    "version": "1.2"
   },
   {
     "id": "SEC-001",
@@ -107,7 +147,11 @@
     "severity": "critical",
     "remediation": "Revoke the exposed credential immediately. Move secrets to a managed store (AWS Secrets Manager, HashiCorp Vault). Rotate the secret and scan git history.",
     "references": ["https://docs.aws.amazon.com/secretsmanager/latest/userguide/intro.html"],
-    "keywords": ["secret", "password", "hardcoded", "credential", "git", "database"]
+    "keywords": ["secret", "password", "hardcoded", "credential", "git", "database"],
+    "provider": "aws",
+    "control": "SEC-001",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "SEC-002",
@@ -117,7 +161,11 @@
     "severity": "critical",
     "remediation": "Revoke the API key immediately. Remove from git history using git filter-branch or BFG. Store in a secrets manager and inject at runtime.",
     "references": ["https://rtyley.github.io/bfg-repo-cleaner/"],
-    "keywords": ["api key", "secret", "git", "committed", "credential", "token"]
+    "keywords": ["api key", "secret", "git", "committed", "credential", "token"],
+    "provider": "aws",
+    "control": "SEC-002",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "SEC-003",
@@ -127,7 +175,11 @@
     "severity": "medium",
     "remediation": "Implement automatic secret rotation. Use AWS Secrets Manager rotation lambda or Vault dynamic secrets. Set rotation policies for all credentials.",
     "references": ["https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotate-secrets.html"],
-    "keywords": ["rotation", "secret", "credential", "policy", "stale"]
+    "keywords": ["rotation", "secret", "credential", "policy", "stale"],
+    "provider": "aws",
+    "control": "SEC-003",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "DAT-001",
@@ -137,7 +189,11 @@
     "severity": "critical",
     "remediation": "Enable SSE-S3 or SSE-KMS encryption. Enforce encryption via bucket policy. Enable access logging and audit trails.",
     "references": ["https://docs.aws.amazon.com/AmazonS3/latest/userguide/serv-side-encryption.html"],
-    "keywords": ["s3", "bucket", "encryption", "customer data", "storage"]
+    "keywords": ["s3", "bucket", "encryption", "customer data", "storage"],
+    "provider": "aws",
+    "control": "DAT-001",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "DAT-002",
@@ -147,7 +203,11 @@
     "severity": "high",
     "remediation": "Enable encryption at rest during the next maintenance window. For existing instances, create an encrypted snapshot and restore to a new encrypted instance.",
     "references": ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.Encryption.html"],
-    "keywords": ["rds", "database", "encryption", "at rest", "aws"]
+    "keywords": ["rds", "database", "encryption", "at rest", "aws"],
+    "provider": "aws",
+    "control": "DAT-002",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "DAT-003",
@@ -157,7 +217,11 @@
     "severity": "medium",
     "remediation": "Enable automated backups with appropriate retention (minimum 7 days). Test restore procedures regularly. Store backups in a separate region.",
     "references": ["https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithAutomatedBackups.html"],
-    "keywords": ["backup", "retention", "database", "recovery", "rds"]
+    "keywords": ["backup", "retention", "database", "recovery", "rds"],
+    "provider": "aws",
+    "control": "DAT-003",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "DAT-004",
@@ -167,7 +231,11 @@
     "severity": "high",
     "remediation": "Enable TLS for all service-to-service communication. Use mutual TLS (mTLS) where possible. Redirect HTTP to HTTPS.",
     "references": ["https://docs.aws.amazon.com/elasticloadbalancing/latest/application/create-https-listener.html"],
-    "keywords": ["tls", "https", "encryption", "transport", "certificate"]
+    "keywords": ["tls", "https", "encryption", "transport", "certificate"],
+    "provider": "aws",
+    "control": "DAT-004",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "IAM-004",
@@ -177,7 +245,11 @@
     "severity": "critical",
     "remediation": "Apply least privilege RBAC. Create custom roles with only required verbs and resources. Audit service account permissions regularly.",
     "references": ["https://kubernetes.io/docs/reference/access-authn-authz/rbac/"],
-    "keywords": ["rbac", "service account", "cluster-admin", "kubernetes", "role binding"]
+    "keywords": ["rbac", "service account", "cluster-admin", "kubernetes", "role binding"],
+    "provider": "k8s",
+    "control": "IAM-004",
+    "source": "kubernetes-security",
+    "version": "1.1"
   },
   {
     "id": "NET-005",
@@ -187,7 +259,11 @@
     "severity": "medium",
     "remediation": "Enable DNSSEC on the hosted zone. Configure DNS resolvers to validate DNSSEC signatures. Monitor for DNS spoofing attempts.",
     "references": ["https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/dns-configuring-dnssec.html"],
-    "keywords": ["dns", "dnssec", "udp", "spoofing", "route53"]
+    "keywords": ["dns", "dnssec", "udp", "spoofing", "route53"],
+    "provider": "aws",
+    "control": "NET-005",
+    "source": "aws-security-best-practices",
+    "version": "1.0"
   },
   {
     "id": "CTR-004",
@@ -197,6 +273,10 @@
     "severity": "high",
     "remediation": "Override default credentials during deployment. Use Kubernetes secrets or external secret operators. Rotate credentials after initial deployment.",
     "references": ["https://helm.sh/docs/howto/charts_secrets/"],
-    "keywords": ["helm", "chart", "default", "credentials", "password", "kubernetes"]
+    "keywords": ["helm", "chart", "default", "credentials", "password", "kubernetes"],
+    "provider": "k8s",
+    "control": "CTR-004",
+    "source": "kubernetes-security",
+    "version": "1.1"
   }
 ]
