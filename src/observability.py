@@ -20,6 +20,14 @@ _metrics = {
     "output_filter_issues_by_type": defaultdict(int),
     "rag_retrievals": 0,
     "rag_retrieval_scores": deque(maxlen=1000),
+    "rag_grounding": {
+        "responses_total": 0,
+        "citation_covered_responses_total": 0,
+        "control_scoped_responses_total": 0,
+        "exact_control_responses_total": 0,
+        "provider_scoped_documents_total": 0,
+        "provider_compatible_documents_total": 0,
+    },
     "ensemble_disagreements": 0,
     "human_review_required": 0,
     "errors": 0,
@@ -108,6 +116,35 @@ def record_rag_retrieval(score):
         _metrics["rag_retrieval_scores"].append(score)
 
 
+def record_rag_grounding(sources, control_id=None, provider=None):
+    """Record privacy-safe grounding coverage for one assessed finding."""
+    sources = sources or []
+    with _metrics_lock:
+        grounding = _metrics["rag_grounding"]
+        grounding["responses_total"] += 1
+
+        if any(
+            source.get("id")
+            and source.get("source_name")
+            and source.get("source_version")
+            and source.get("references")
+            for source in sources
+        ):
+            grounding["citation_covered_responses_total"] += 1
+
+        if control_id and control_id != "unclassified":
+            grounding["control_scoped_responses_total"] += 1
+            if any(source.get("control_id") == control_id for source in sources):
+                grounding["exact_control_responses_total"] += 1
+
+        if provider and provider != "generic":
+            grounding["provider_scoped_documents_total"] += len(sources)
+            grounding["provider_compatible_documents_total"] += sum(
+                source.get("provider", "generic") in (provider, "generic")
+                for source in sources
+            )
+
+
 def record_ensemble_disagreement():
     with _metrics_lock:
         _metrics["ensemble_disagreements"] += 1
@@ -141,11 +178,41 @@ def get_metrics():
     with _metrics_lock:
         scores = list(_metrics["rag_retrieval_scores"])
         times = list(_metrics["response_times_ms"])
+        grounding = dict(_metrics["rag_grounding"])
 
         avg_score = round(sum(scores) / len(scores), 4) if scores else 0
         avg_time = round(sum(times) / len(times), 2) if times else 0
         p95_time = round(sorted(times)[int(len(times) * 0.95)], 2) if len(times) >= 20 else avg_time
         p99_time = round(sorted(times)[int(len(times) * 0.99)], 2) if len(times) >= 100 else avg_time
+        grounding_rates = {
+            "citation_coverage_rate": (
+                round(
+                    grounding["citation_covered_responses_total"]
+                    / grounding["responses_total"],
+                    4,
+                )
+                if grounding["responses_total"]
+                else None
+            ),
+            "exact_control_hit_rate": (
+                round(
+                    grounding["exact_control_responses_total"]
+                    / grounding["control_scoped_responses_total"],
+                    4,
+                )
+                if grounding["control_scoped_responses_total"]
+                else None
+            ),
+            "provider_compatibility_rate": (
+                round(
+                    grounding["provider_compatible_documents_total"]
+                    / grounding["provider_scoped_documents_total"],
+                    4,
+                )
+                if grounding["provider_scoped_documents_total"]
+                else None
+            ),
+        }
 
         return {
             "summary": {
@@ -164,6 +231,7 @@ def get_metrics():
                 "p99_response_time_ms": p99_time,
                 "avg_rag_retrieval_score": avg_score,
             },
+            "grounding": {**grounding, **grounding_rates},
             "breakdowns": {
                 "by_category": dict(_metrics["requests_by_category"]),
                 "by_severity": dict(_metrics["requests_by_severity"]),
@@ -227,6 +295,8 @@ def reset_metrics():
         _metrics["output_filter_issues_by_type"].clear()
         _metrics["rag_retrievals"] = 0
         _metrics["rag_retrieval_scores"].clear()
+        for key in _metrics["rag_grounding"]:
+            _metrics["rag_grounding"][key] = 0
         _metrics["ensemble_disagreements"] = 0
         _metrics["human_review_required"] = 0
         _metrics["errors"] = 0

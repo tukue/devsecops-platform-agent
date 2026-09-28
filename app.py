@@ -16,7 +16,7 @@ from src.output_filter import filter_output
 from src.observability import (
     setup_logging, PerformanceTimer, record_request, record_validation_block,
     record_output_filter_issue, record_rag_retrieval, record_ensemble_disagreement,
-    record_human_review, record_error, record_session, record_finding_in_session,
+    record_rag_grounding, record_human_review, record_error, record_session, record_finding_in_session,
     get_metrics, get_health_status, reset_metrics,
 )
 
@@ -93,6 +93,11 @@ def analyze_finding(finding, session_id=None, metadata=None):
         if rag_sources:
             for source in rag_sources:
                 record_rag_retrieval(source.get("relevance", 0))
+        record_rag_grounding(
+            rag_sources,
+            control_id=canonical_finding.control_id,
+            provider=canonical_finding.provider,
+        )
 
     with PerformanceTimer("memory_lookup", trace_id):
         memory_context = memory.get_context(session_id)
