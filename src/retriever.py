@@ -193,7 +193,7 @@ class SecurityRetriever:
         reranked.sort(key=lambda x: (x[2], x[3], x[1]), reverse=True)
         return [(idx, score) for idx, score, _, _ in reranked[:k]]
 
-    def retrieve(self, query, top_k=None, control_id=None, provider=None):
+    def retrieve(self, query, top_k=None, retrieve_by="hybrid"):
         k = top_k or self.top_k
         combined = self._hybrid_score(query)
         ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
@@ -210,42 +210,48 @@ class SecurityRetriever:
                 results.append(entry)
                 seen.add(idx)
 
+        # Re-sort by control first, then provider
+        if retrieve_by == "control_first":
+            results.sort(key=lambda x: (x.get("control", ""), x.get("provider", "")))
+
         return results
 
-    def build_context(self, query, top_k=None, control_id=None, provider=None):
-        results = self.retrieve(query, top_k, control_id=control_id, provider=provider)
+    def build_context(self, query, top_k=None):
+        results = self.retrieve(query, top_k, retrieve_by="control_first")
         if not results:
             return "", []
 
         context_parts = []
         sources = []
         for i, r in enumerate(results, 1):
-            references = r.get("references", [])
-            citation = "; ".join(references) if references else "Source reference unavailable"
+            # Build citation
+            citation = f"[{i}] {r['id']}: {r['title']} (Control: {r.get('control', 'N/A')})"
+            if r.get('provider'):
+                citation += f" | Provider: {r['provider']}"
+
+            # Build validation guidance
+            validation = ""
+            if r.get("severity") in ("critical", "high"):
+                validation = f"\n    **Validation Required**: This finding has {r['severity']} severity - validate remediation before applying."
+
+            # Build rollback/dependency warning
+            rollback_warning = ""
+            if r.get("severity") in ("critical", "high"):
+                rollback_warning = f"\n    **Rollback/Dependency Warning**: Critical/high findings may have infrastructure dependencies - test remediation in staging first."
+
             context_parts.append(
-                f"[{i}] {r['title']} (Category: {r['category']}, Severity: {r['severity']}, "
-                f"Control: {r.get('control_id', 'unclassified')}, Provider: {r.get('provider', 'generic')})\n"
+                f"{citation}\n"
                 f"    Finding: {r['finding']}\n"
-                f"    Remediation: {r['remediation']}\n"
-                f"    Validation: {r.get('validation', 'Review with the owning team.')}\n"
-                f"    Rollback/dependencies: {r.get('rollback_guidance', 'Validate dependencies and prepare a rollback plan before changes.')}\n"
-                f"    Citation: {r.get('source_name', r['title'])} v{r.get('source_version', 'unspecified')} ({citation})"
+                f"    Remediation: {r['remediation']}{validation}{rollback_warning}"
             )
             sources.append({
                 "id": r["id"],
                 "title": r["title"],
                 "category": r["category"],
+                "control": r.get("control", ""),
+                "provider": r.get("provider", ""),
                 "relevance": r["relevance_score"],
-                "control_id": r.get("control_id", "unclassified"),
-                "provider": r.get("provider", "generic"),
-                "source_name": r.get("source_name", r["title"]),
-                "source_version": r.get("source_version", "unspecified"),
-                "references": references,
-                "validation": r.get("validation", "Review with the owning team."),
-                "rollback_guidance": r.get(
-                    "rollback_guidance",
-                    "Validate dependencies and prepare a rollback plan before changes.",
-                ),
+                "severity": r.get("severity", ""),
             })
 
         return "\n\n".join(context_parts), sources

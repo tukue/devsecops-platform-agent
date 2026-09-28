@@ -177,6 +177,18 @@ def analyze_finding(finding, session_id=None, metadata=None):
     )
     record_finding_in_session(session_id)
 
+    # Build comprehensive recommendation with all required fields
+    rec_source_citation = ""
+    if rag_context:
+        # Extract source citation from the first relevant KB entry
+        first_source = None
+        for source in rag_sources or []:
+            if source.get("id"):
+                first_source = source
+                break
+        if first_source:
+            rec_source_citation = f"\n\nSource Citation: {first_source['id']} - {first_source['title']} ({first_source.get('provider', 'N/A')})"
+
     result = {
         "category": classification["category"],
         "control_id": classification["control_id"],
@@ -197,7 +209,21 @@ def analyze_finding(finding, session_id=None, metadata=None):
         "rag_sources": rag_sources,
         "session_id": session_id,
         "trace_id": trace_id,
+        "risk": classification["severity"] in {"critical", "high"},
+        "evidence": finding,
+        "remediation": REMEDIATIONS.get(
+            classification["category"],
+            "Review the finding and apply standard security hardening practices.",
+        ),
+        "validation": f"Validate remediation for {classification['severity']} severity finding before applying",
+        "rollback_warning": f"Test critical/high severity remediation in staging environment first" 
+            if classification["severity"] in {"critical", "high"} else "",
+        "source_citation": rec_source_citation,
     }
+
+    risk_summary = memory.get_risk_summary(session_id)
+    if risk_summary:
+        result["session_risk_summary"] = risk_summary
 
     if warnings:
         result["input_warnings"] = warnings
@@ -206,10 +232,6 @@ def analyze_finding(finding, session_id=None, metadata=None):
         result["output_warnings"] = filtered["issues"]
 
     memory.add_interaction(session_id, finding, result)
-
-    risk_summary = memory.get_risk_summary(session_id)
-    if risk_summary:
-        result["session_risk_summary"] = risk_summary
 
     return result
 
