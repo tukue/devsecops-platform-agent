@@ -193,7 +193,7 @@ class SecurityRetriever:
         reranked.sort(key=lambda x: (x[2], x[3], x[1]), reverse=True)
         return [(idx, score) for idx, score, _, _ in reranked[:k]]
 
-    def retrieve(self, query, top_k=None, retrieve_by="hybrid"):
+    def retrieve(self, query, top_k=None, retrieve_by="hybrid", control_id=None, provider=None):
         k = top_k or self.top_k
         combined = self._hybrid_score(query)
         ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
@@ -210,14 +210,14 @@ class SecurityRetriever:
                 results.append(entry)
                 seen.add(idx)
 
-        # Re-sort by control first, then provider
-        if retrieve_by == "control_first":
+        # Control-first reordering for Workstream 4
+        if retrieve_by == "control_first" and control_id:
             results.sort(key=lambda x: (x.get("control", ""), x.get("provider", "")))
 
         return results
 
-    def build_context(self, query, top_k=None):
-        results = self.retrieve(query, top_k, retrieve_by="control_first")
+def build_context(self, query, top_k=None, control_id=None, provider=None):
+        results = self.retrieve(query, top_k, retrieve_by="control_first", control_id=control_id, provider=provider)
         if not results:
             return "", []
 
