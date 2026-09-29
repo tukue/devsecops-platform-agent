@@ -193,7 +193,7 @@ class SecurityRetriever:
         reranked.sort(key=lambda x: (x[2], x[3], x[1]), reverse=True)
         return [(idx, score) for idx, score, _, _ in reranked[:k]]
 
-    def retrieve(self, query, top_k=None, retrieve_by="hybrid"):
+    def retrieve(self, query, top_k=None, retrieve_by="hybrid", control_id=None, provider=None):
         k = top_k or self.top_k
         combined = self._hybrid_score(query)
         ranked = sorted(combined.items(), key=lambda x: x[1], reverse=True)
@@ -210,14 +210,14 @@ class SecurityRetriever:
                 results.append(entry)
                 seen.add(idx)
 
-        # Re-sort by control first, then provider
-        if retrieve_by == "control_first":
+        # Control-first reordering for Workstream 4
+        if retrieve_by == "control_first" and control_id:
             results.sort(key=lambda x: (x.get("control", ""), x.get("provider", "")))
 
         return results
 
-    def build_context(self, query, top_k=None):
-        results = self.retrieve(query, top_k, retrieve_by="control_first")
+    def build_context(self, query, top_k=None, control_id=None, provider=None):
+        results = self.retrieve(query, top_k, retrieve_by="control_first", control_id=control_id, provider=provider)
         if not results:
             return "", []
 
@@ -225,19 +225,19 @@ class SecurityRetriever:
         sources = []
         for i, r in enumerate(results, 1):
             # Build citation
-            citation = f"[{i}] {r['id']}: {r['title']} (Control: {r.get('control', 'N/A')})"
+            citation = f"Citation: [{i}] {r['id']}: {r['title']} (Control: {r.get('control', 'N/A')})"
             if r.get('provider'):
                 citation += f" | Provider: {r['provider']}"
 
             # Build validation guidance
             validation = ""
             if r.get("severity") in ("critical", "high"):
-                validation = f"\n    **Validation Required**: This finding has {r['severity']} severity - validate remediation before applying."
+                validation = f"\n    **Validation Required**: This finding has {r['severity']} severity - validate remediation before applying.\n    **Validation:** Manual verification required before deployment"
 
             # Build rollback/dependency warning
             rollback_warning = ""
             if r.get("severity") in ("critical", "high"):
-                rollback_warning = f"\n    **Rollback/Dependency Warning**: Critical/high findings may have infrastructure dependencies - test remediation in staging first."
+                rollback_warning = f"\n    **Rollback/dependencies:** Critical/high findings may have infrastructure dependencies - test remediation in staging first."
 
             context_parts.append(
                 f"{citation}\n"
@@ -252,6 +252,8 @@ class SecurityRetriever:
                 "provider": r.get("provider", ""),
                 "relevance": r["relevance_score"],
                 "severity": r.get("severity", ""),
+                "source_version": r.get("version", "1.0"),
+                "references": r.get("references", []),
             })
 
         return "\n\n".join(context_parts), sources
