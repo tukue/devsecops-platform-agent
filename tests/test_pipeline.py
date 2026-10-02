@@ -683,7 +683,7 @@ def test_cot_severity_explanation():
 
 from src.observability import (
     record_request, record_validation_block, record_output_filter_issue,
-    record_rag_retrieval, record_ensemble_disagreement, record_human_review,
+    record_rag_retrieval, record_rag_grounding, record_ensemble_disagreement, record_human_review,
     record_error, record_session, record_finding_in_session,
     get_metrics, get_health_status, reset_metrics, PerformanceTimer,
 )
@@ -723,6 +723,51 @@ def test_record_rag_retrieval():
     metrics = get_metrics()
     assert metrics["summary"]["rag_retrievals_total"] == 2
     assert metrics["performance"]["avg_rag_retrieval_score"] == 0.785
+
+
+def test_rag_grounding_metrics_report_citation_control_and_provider_coverage():
+    reset_metrics()
+    record_rag_grounding(
+        [
+            {
+                "id": "IAM-001",
+                "control_id": "identity.least-privilege",
+                "provider": "aws",
+                "source_name": "AWS IAM guide",
+                "source_version": "1.0",
+                "references": ["https://example.test/iam"],
+            },
+            {"id": "GEN-001", "control_id": "identity.least-privilege", "provider": "generic"},
+        ],
+        control_id="identity.least-privilege",
+        provider="aws",
+    )
+    record_rag_grounding(
+        [{"id": "NET-001", "control_id": "network.public-ingress", "provider": "gcp"}],
+        control_id="network.public-ingress",
+        provider="aws",
+    )
+
+    grounding = get_metrics()["grounding"]
+    assert grounding["responses_total"] == 2
+    assert grounding["citation_covered_responses_total"] == 1
+    assert grounding["citation_coverage_rate"] == 0.5
+    assert grounding["control_scoped_responses_total"] == 2
+    assert grounding["exact_control_responses_total"] == 2
+    assert grounding["exact_control_hit_rate"] == 1.0
+    assert grounding["provider_scoped_documents_total"] == 3
+    assert grounding["provider_compatible_documents_total"] == 2
+    assert grounding["provider_compatibility_rate"] == round(2 / 3, 4)
+
+
+def test_rag_grounding_rates_are_null_without_samples_and_reset_clears_them():
+    reset_metrics()
+    assert get_metrics()["grounding"]["citation_coverage_rate"] is None
+    record_rag_grounding([], control_id="unclassified", provider="generic")
+    assert get_metrics()["grounding"]["citation_coverage_rate"] == 0.0
+    reset_metrics()
+    assert get_metrics()["grounding"]["responses_total"] == 0
+    assert get_metrics()["grounding"]["citation_coverage_rate"] is None
 
 
 def test_record_ensemble_disagreement():

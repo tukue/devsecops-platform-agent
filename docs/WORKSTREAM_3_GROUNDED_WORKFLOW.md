@@ -23,6 +23,13 @@ These are baseline engineering gates, not a substitute for expert review. As
 the knowledge base grows, expand the benchmark and keep a held-out set for
 release evaluation.
 
+The runtime observability panel also reports citation coverage, exact-control
+hit rate, and provider-compatible source rate. These operational rates expose
+grounding regressions on real requests; they do not replace the labeled
+Recall@K/Precision@K benchmark. Rates are `null` until their denominator has
+observations and are process-local because the current metrics backend is
+in-memory.
+
 ## Assessment response
 
 Each analysis response exposes risk summary, evidence, owner, remediation,
