@@ -44,7 +44,7 @@ button#analyze-button:focus-visible {
 retriever = SecurityRetriever(top_k=5)
 classifier = EnsembleClassifier(confidence_threshold=0.55)
 memory = ConversationMemory(max_sessions=10)
-provider_router = ProviderRouter()
+provider_router = ProviderRouter(enable_azure=False, enable_gcp=False)
 
 SESSION_COUNTER = 0
 SESSION_LOCK = threading.Lock()
