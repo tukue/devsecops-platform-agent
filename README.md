@@ -381,8 +381,8 @@ flowchart TB
     RERANK2 --> NOTIFY
     RERANK2 --> AUDIT
 
-    style CURRENT fill:#e8f5e9,stroke:#2e7d32
-    style EXTENDED fill:#e3f2fd,stroke:#1565c0
+    style CURRENT fill:#e8f5e9
+    style EXTENDED fill:#e3f2fd
 ```
 
 ### Multi-Cloud Deployment Options
@@ -548,8 +548,8 @@ flowchart TB
     H_block --> M_val
     H_perf --> M_time
 
-    style OBS fill:#fff3e0,stroke:#15803d
-    style DASHBOARD fill:#e8f5e9,stroke:#2e7d32
+    style OBS fill:#fff3e0
+    style DASHBOARD fill:#e8f5e9
 ```
 
 ### Observability Data Flow
