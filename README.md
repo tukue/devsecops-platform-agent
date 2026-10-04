@@ -8,17 +8,57 @@ python_version: "3.10"
 app_file: app.py
 fullWidth: true
 short_description: AI security advisor for platform engineering and SRE.
+tags:
+  - devsecops
+  - platform-engineering
+  - sre
+  - security-advisor
+  - rag
+  - guardrails
+  - portfolio
 ---
 
 # Platform Engineering DevSecOps Advisor
 
+[![Live Demo](https://img.shields.io/badge/🚀-Live%20Demo-brightgreen)](https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
+[![Gradio](https://img.shields.io/badge/Gradio-4.x-orange)](https://gradio.app/)
+
+## 🎯 Live Demo — **Click to Try**
+
+**[🔗 https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor](https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor)**
+
+> **Permanent portfolio demo** hosted on Hugging Face Spaces. No setup required — works immediately in browser.
+
+---
+
+## 👔 For Recruiters & Hiring Managers
+
+| What You'll See | Where to Look |
+|---|---|
+| **Production-ready AI security advisor** with RAG + ensemble classification | [Architecture](#system-architecture) |
+| **Responsible AI practices**: 6-layer prompt injection defense, PII masking, output filtering | [AI Agent Features](#ai-agent-features) |
+| **Clean, modular codebase** with separation of concerns | [Repository Structure](#repository-structure) |
+| **Comprehensive test suite** (72 tests) covering all modules | [tests/](tests/) |
+| **Observability built-in**: structured logging, metrics, health checks | [Observability](#observability-and-monitoring-architecture) |
+| **Deployment configs** for Docker, HF Spaces, multi-cloud | [Roadmap](#roadmap) |
+
+**Quick talking points for interviews:**
+- Built a security advisor with hybrid classification: rule-based for known patterns + ensemble zero-shot for novel findings
+- Implemented 6-layer input validation (prompt injection, encoding evasion, multilingual, separators, PII, rate limiting)
+- Designed RAG pipeline with TF-IDF + keyword hybrid search, query expansion, and category/severity reranking
+- Added chain-of-thought reasoning for transparent, auditable classification decisions
+- Built session memory with risk summaries and context-aware recommendations
+- Comprehensive output filtering: PII masking, unsafe advice blocking, hallucination detection
+- Full observability stack: structured logs, Prometheus metrics, health checks, Grafana-ready dashboards
+- Modular Python architecture: UI ↔ validation ↔ RAG ↔ classification ↔ memory ↔ reasoning ↔ filtering
+
+---
+
 A lightweight AI-assisted advisor that helps Platform Engineering and Site Reliability Engineering (SRE) teams turn infrastructure security findings into consistent, actionable remediation guidance.
 
 The application accepts a finding, classifies it across common platform-security domains, assigns a severity, recommends a remediation path, and identifies the responsible platform team. It is advisory only: it does not modify infrastructure, deploy changes, or make access-control decisions.
-
-## Live Deployment
-
-Run the advisor in Hugging Face Spaces: [platform-eng-agent-advisor](https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor).
 
 ## Business Need
 
@@ -341,8 +381,8 @@ flowchart TB
     RERANK2 --> NOTIFY
     RERANK2 --> AUDIT
 
-    style CURRENT fill:#e8f5e9,stroke:#2e7d32
-    style EXTENDED fill:#e3f2fd,stroke:#1565c0
+    style CURRENT fill:#e8f5e9
+    style EXTENDED fill:#e3f2fd
 ```
 
 ### Multi-Cloud Deployment Options
@@ -508,8 +548,8 @@ flowchart TB
     H_block --> M_val
     H_perf --> M_time
 
-    style OBS fill:#fff3e0,stroke:#e65100
-    style DASHBOARD fill:#e8f5e9,stroke:#2e7d32
+    style OBS fill:#fff3e0
+    style DASHBOARD fill:#e8f5e9
 ```
 
 ### Observability Data Flow
