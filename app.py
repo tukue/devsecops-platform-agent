@@ -215,7 +215,6 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "session_id": session_id,
         "trace_id": trace_id,
         "risk": classification["severity"] in {"critical", "high"},
-        "evidence": finding,
         "remediation": REMEDIATIONS.get(
             classification["category"],
             "Review the finding and apply standard security hardening practices.",
@@ -226,10 +225,6 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "source_citation": rec_source_citation,
     }
 
-    risk_summary = memory.get_risk_summary(session_id)
-    if risk_summary:
-        result["session_risk_summary"] = risk_summary
-
     if warnings:
         result["input_warnings"] = warnings
 
@@ -238,14 +233,28 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
 
     memory.add_interaction(session_id, finding, result)
 
+    risk_summary = memory.get_risk_summary(session_id)
+    if risk_summary:
+        result["session_risk_summary"] = risk_summary
+
     return result
 
 
 def analyze_ingested_findings(source, payload, session_id=None, owner=None):
     """Analyze exported scanner findings while retaining manual analysis compatibility."""
+    records = normalize_payload(source, payload)
+    if not records:
+        return []
+
+    # Resolve one session for the whole batch so every finding in the export
+    # lands in the same conversation history instead of minting a session per
+    # finding.
+    batch_session, session_created = sessions.resolve(session_id, owner)
+    if session_created:
+        record_session(batch_session)
     return [
-        analyze_finding(finding, session_id=session_id, metadata=metadata, owner=owner)
-        for finding, metadata in normalize_payload(source, payload)
+        analyze_finding(finding, session_id=batch_session, metadata=metadata, owner=owner)
+        for finding, metadata in records
     ]
 
 

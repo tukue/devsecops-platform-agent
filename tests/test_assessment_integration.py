@@ -166,6 +166,55 @@ def test_unowned_callers_can_reuse_their_own_session_id():
     assert app.memory.get_risk_summary("review-42")["total_findings"] == 2
 
 
+def _checkov_payload():
+    return {
+        "results": {
+            "failed_checks": [
+                {
+                    "check_id": "CKV_AWS_1",
+                    "check_name": "S3 bucket public access",
+                    "resource": "aws_s3_bucket.logs",
+                    "framework": "terraform",
+                    "check_type": "resource",
+                    "file_path": "main.tf",
+                },
+                {
+                    "check_id": "CKV_AWS_20",
+                    "check_name": "S3 bucket encryption at rest",
+                    "resource": "aws_s3_bucket.logs",
+                    "framework": "terraform",
+                    "check_type": "resource",
+                    "file_path": "main.tf",
+                },
+            ]
+        }
+    }
+
+
+def test_batch_ingestion_shares_one_session_across_all_findings():
+    results = app.analyze_ingested_findings("checkov", _checkov_payload())
+    session_ids = {result["session_id"] for result in results}
+
+    assert len(results) == 2
+    assert len(session_ids) == 1
+    batch_session = session_ids.pop()
+    assert batch_session.startswith("session_")
+    assert app.memory.get_risk_summary(batch_session)["total_findings"] == 2
+
+    follow_up = app.analyze_ingested_findings("checkov", _checkov_payload())
+    assert {result["session_id"] for result in follow_up} != {batch_session}
+
+
+def test_batch_ingestion_with_an_owner_keeps_one_bound_session():
+    first = app.analyze_ingested_findings("checkov", _checkov_payload(), owner="browser-batch")
+    second = app.analyze_ingested_findings("checkov", _checkov_payload(), owner="browser-batch")
+
+    bound_session = first[0]["session_id"]
+    assert {result["session_id"] for result in first} == {bound_session}
+    assert {result["session_id"] for result in second} == {bound_session}
+    assert app.memory.get_risk_summary(bound_session)["total_findings"] == 4
+
+
 def test_chain_of_thought_assessment_reads_the_bound_session_context():
     _call("review_finding", [SSH_FINDING], "browser-cot")
     result = _call("review_finding_with_cot", [PRIVILEGED_FINDING], "browser-cot")

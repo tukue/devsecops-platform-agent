@@ -35,6 +35,11 @@ class SessionRegistry:
           callers manage their own sessions) and anything else gets a new
           server-generated ID. Empty or whitespace IDs are never reused as a
           shared key.
+        - Unowned sessions are deliberately not retained in the registry:
+          without an owner identity there is nothing safe to key them on, so
+          an unowned caller must thread the returned ID into its next call or
+          every call gets its own empty history. ``analyze_ingested_findings``
+          resolves once per batch and passes that ID down for this reason.
         - With ``create=False`` nothing is minted or bound; an unbound caller
           gets ``None``.
         """

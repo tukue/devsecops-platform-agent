@@ -15,6 +15,11 @@ CATEGORY_SYNONYMS = {
     "data": ["storage", "database", "encryption", "backup", "pii", "phi", "gdpr", "compliance"],
 }
 
+DEFAULT_SOURCE_ID = "unknown"
+DEFAULT_TITLE = "Untitled knowledge entry"
+DEFAULT_CATEGORY = "Uncategorized"
+DEFAULT_CONTROL = ""
+DEFAULT_SEVERITY = "unknown"
 DEFAULT_CONTROL_ID = "unclassified"
 DEFAULT_PROVIDER = "generic"
 DEFAULT_SOURCE_VERSION = "unspecified"
@@ -27,7 +32,9 @@ SOURCE_FIELDS = (
     "id",
     "title",
     "category",
+    "severity",
     "relevance",
+    "control",
     "control_id",
     "provider",
     "source_name",
@@ -36,6 +43,10 @@ SOURCE_FIELDS = (
     "validation",
     "rollback_guidance",
 )
+
+# Fields every knowledge-base entry must define for retrieval and ranking to
+# read them with direct subscript access.
+REQUIRED_KB_FIELDS = ("id", "title", "category", "severity", "finding", "remediation")
 
 FINDING_SYNONYMS = {
     "publicly accessible": ["exposed", "open to internet", "world-readable", "public", "0.0.0.0/0"],
@@ -79,7 +90,32 @@ def _expand_query(query):
 def _load_kb():
     path = os.path.join(DATA_DIR, "security_kb.json")
     with open(path, "r") as f:
-        return json.load(f)
+        entries = json.load(f)
+    _validate_kb(entries)
+    return entries
+
+
+def _validate_kb(entries):
+    """Fail fast on malformed knowledge-base entries.
+
+    Retrieval and ranking read these fields with direct subscript access, so a
+    single entry missing one of them would crash every analysis instead of
+    surfacing a clear data problem at startup.
+    """
+    if not isinstance(entries, list):
+        raise ValueError("security_kb.json must contain a list of knowledge-base entries")
+
+    problems = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            problems.append("entry {}: not an object".format(index))
+            continue
+        missing = [field for field in REQUIRED_KB_FIELDS if not entry.get(field)]
+        if missing:
+            problems.append("entry {}: missing {}".format(index, ", ".join(missing)))
+
+    if problems:
+        raise ValueError("security_kb.json is invalid -> " + "; ".join(problems))
 
 
 def build_source(entry, relevance):
@@ -92,14 +128,18 @@ def build_source(entry, relevance):
     back to explicit defaults so no consumer can raise a KeyError.
     """
     return {
-        "id": entry["id"],
-        "title": entry["title"],
-        "category": entry["category"],
+        "id": entry.get("id") or DEFAULT_SOURCE_ID,
+        "title": entry.get("title") or DEFAULT_TITLE,
+        "category": entry.get("category") or DEFAULT_CATEGORY,
+        "severity": entry.get("severity") or DEFAULT_SEVERITY,
         "relevance": relevance,
+        "control": entry.get("control") or DEFAULT_CONTROL,
         "control_id": entry.get("control_id") or DEFAULT_CONTROL_ID,
         "provider": entry.get("provider") or DEFAULT_PROVIDER,
-        "source_name": entry.get("source_name") or entry["title"],
-        "source_version": entry.get("source_version") or DEFAULT_SOURCE_VERSION,
+        "source_name": entry.get("source_name") or (entry.get("title") or DEFAULT_TITLE),
+        "source_version": entry.get("version")
+        or entry.get("source_version")
+        or DEFAULT_SOURCE_VERSION,
         "references": list(entry.get("references") or []),
         "validation": entry.get("validation") or DEFAULT_VALIDATION,
         "rollback_guidance": entry.get("rollback_guidance")
@@ -274,14 +314,24 @@ class SecurityRetriever:
             source = build_source(r, r["relevance_score"])
             references = source["references"]
             citation = "; ".join(references) if references else "Source reference unavailable"
+            severity = source["severity"]
+            severity_warning = ""
+            if severity in ("critical", "high"):
+                severity_warning = (
+                    f"\n    **Validation Required**: This finding has {severity} severity - "
+                    "validate remediation before applying."
+                    f"\n    **Rollback/dependencies:** {severity.capitalize()} findings may have "
+                    "infrastructure dependencies - test remediation in staging first."
+                )
             context_parts.append(
-                f"[{i}] {source['title']} (Category: {source['category']}, Severity: {r['severity']}, "
+                f"[{i}] {source['title']} (Category: {source['category']}, Severity: {severity}, "
                 f"Control: {source['control_id']}, Provider: {source['provider']})\n"
                 f"    Finding: {r['finding']}\n"
                 f"    Remediation: {r['remediation']}\n"
                 f"    Validation: {source['validation']}\n"
                 f"    Rollback/dependencies: {source['rollback_guidance']}\n"
                 f"    Citation: {source['source_name']} v{source['source_version']} ({citation})"
+                f"{severity_warning}"
             )
             sources.append(source)
 

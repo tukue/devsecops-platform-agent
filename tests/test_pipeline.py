@@ -4,6 +4,8 @@ import json
 import tempfile
 from unittest.mock import MagicMock
 
+import pytest
+
 mock_transformers = MagicMock()
 sys.modules["transformers"] = mock_transformers
 sys.modules["spaces"] = MagicMock()
@@ -12,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.input_validation import validate_input
 from src.output_filter import filter_output
-from src.retriever import SecurityRetriever, SOURCE_FIELDS
+from src.retriever import SecurityRetriever, SOURCE_FIELDS, _validate_kb
 from src.memory import ConversationMemory
 from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
@@ -308,6 +310,27 @@ def test_retrieval_sources_expose_the_shared_citation_and_grounding_schema():
     assert all(source["source_name"] in context for source in sources)
 
 
+def test_knowledge_base_validation_rejects_malformed_entries():
+    incomplete = {
+        "id": "DAT-999",
+        "category": "Data",
+        "severity": "high",
+        "finding": "Bucket stores customer records without encryption.",
+        "remediation": "Enable default encryption at rest.",
+    }
+    try:
+        _validate_kb([incomplete])
+        assert False, "entries missing required fields must be rejected"
+    except ValueError as exc:
+        assert "entry 0: missing title" in str(exc)
+
+    try:
+        _validate_kb({"id": "DAT-999"})
+        assert False, "a non-list knowledge base must be rejected"
+    except ValueError as exc:
+        assert "must contain a list" in str(exc)
+
+
 def test_retrieval_benchmark_meets_recall_at_3_and_precision_at_3():
     benchmark = [
         ("IAM role wildcard permissions", "identity.least-privilege", "aws", {"IAM-001"}),
@@ -520,6 +543,10 @@ def test_ingestion_rejects_invalid_or_empty_payloads():
         pass
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="hardened loader opens directories with POSIX directory-relative calls",
+)
 def test_json_upload_loader_accepts_bounded_object_export():
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", encoding="utf-8", delete=False
