@@ -15,6 +15,28 @@ CATEGORY_SYNONYMS = {
     "data": ["storage", "database", "encryption", "backup", "pii", "phi", "gdpr", "compliance"],
 }
 
+DEFAULT_CONTROL_ID = "unclassified"
+DEFAULT_PROVIDER = "generic"
+DEFAULT_SOURCE_VERSION = "unspecified"
+DEFAULT_VALIDATION = "Review with the owning team."
+DEFAULT_ROLLBACK_GUIDANCE = (
+    "Validate dependencies and prepare a rollback plan before changes."
+)
+
+SOURCE_FIELDS = (
+    "id",
+    "title",
+    "category",
+    "relevance",
+    "control_id",
+    "provider",
+    "source_name",
+    "source_version",
+    "references",
+    "validation",
+    "rollback_guidance",
+)
+
 FINDING_SYNONYMS = {
     "publicly accessible": ["exposed", "open to internet", "world-readable", "public", "0.0.0.0/0"],
     "hardcoded": ["committed", "embedded", "in code", "plaintext", "clear text"],
@@ -58,6 +80,31 @@ def _load_kb():
     path = os.path.join(DATA_DIR, "security_kb.json")
     with open(path, "r") as f:
         return json.load(f)
+
+
+def build_source(entry, relevance):
+    """Build the shared retrieval source record.
+
+    Every consumer of retrieval results reads this one schema: app.py builds
+    citations from `source_name`, `source_version`, and `references`, while the
+    grounding metrics read `id`, `source_name`, `source_version`, `references`,
+    `control_id`, and `provider`. Optional knowledge-base fields always fall
+    back to explicit defaults so no consumer can raise a KeyError.
+    """
+    return {
+        "id": entry["id"],
+        "title": entry["title"],
+        "category": entry["category"],
+        "relevance": relevance,
+        "control_id": entry.get("control_id") or DEFAULT_CONTROL_ID,
+        "provider": entry.get("provider") or DEFAULT_PROVIDER,
+        "source_name": entry.get("source_name") or entry["title"],
+        "source_version": entry.get("source_version") or DEFAULT_SOURCE_VERSION,
+        "references": list(entry.get("references") or []),
+        "validation": entry.get("validation") or DEFAULT_VALIDATION,
+        "rollback_guidance": entry.get("rollback_guidance")
+        or DEFAULT_ROLLBACK_GUIDANCE,
+    }
 
 
 class SecurityRetriever:
@@ -220,32 +267,18 @@ class SecurityRetriever:
         context_parts = []
         sources = []
         for i, r in enumerate(results, 1):
-            references = r.get("references", [])
+            source = build_source(r, r["relevance_score"])
+            references = source["references"]
             citation = "; ".join(references) if references else "Source reference unavailable"
             context_parts.append(
-                f"[{i}] {r['title']} (Category: {r['category']}, Severity: {r['severity']}, "
-                f"Control: {r.get('control_id', 'unclassified')}, Provider: {r.get('provider', 'generic')})\n"
+                f"[{i}] {source['title']} (Category: {source['category']}, Severity: {r['severity']}, "
+                f"Control: {source['control_id']}, Provider: {source['provider']})\n"
                 f"    Finding: {r['finding']}\n"
                 f"    Remediation: {r['remediation']}\n"
-                f"    Validation: {r.get('validation', 'Review with the owning team.')}\n"
-                f"    Rollback/dependencies: {r.get('rollback_guidance', 'Validate dependencies and prepare a rollback plan before changes.')}\n"
-                f"    Citation: {r.get('source_name', r['title'])} v{r.get('source_version', 'unspecified')} ({citation})"
+                f"    Validation: {source['validation']}\n"
+                f"    Rollback/dependencies: {source['rollback_guidance']}\n"
+                f"    Citation: {source['source_name']} v{source['source_version']} ({citation})"
             )
-            sources.append({
-                "id": r["id"],
-                "title": r["title"],
-                "category": r["category"],
-                "relevance": r["relevance_score"],
-                "control_id": r.get("control_id", "unclassified"),
-                "provider": r.get("provider", "generic"),
-                "source_name": r.get("source_name", r["title"]),
-                "source_version": r.get("source_version", "unspecified"),
-                "references": references,
-                "validation": r.get("validation", "Review with the owning team."),
-                "rollback_guidance": r.get(
-                    "rollback_guidance",
-                    "Validate dependencies and prepare a rollback plan before changes.",
-                ),
-            })
+            sources.append(source)
 
         return "\n\n".join(context_parts), sources

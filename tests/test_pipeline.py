@@ -12,8 +12,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.input_validation import validate_input
 from src.output_filter import filter_output
-from src.retriever import SecurityRetriever
+from src.retriever import SecurityRetriever, SOURCE_FIELDS
 from src.memory import ConversationMemory
+from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
 from src.ensemble import (
     EnsembleClassifier, determine_category, determine_severity,
@@ -289,6 +290,24 @@ def test_control_and_provider_aware_retrieval_returns_citations_and_safety_guida
     assert "Citation:" in context
 
 
+def test_retrieval_sources_expose_the_shared_citation_and_grounding_schema():
+    r = SecurityRetriever(top_k=5)
+    context, sources = r.build_context(
+        "security group allows SSH from 0.0.0.0/0",
+        control_id="network.public-ingress",
+        provider="aws",
+    )
+    assert sources
+    for source in sources:
+        assert set(source) == set(SOURCE_FIELDS)
+        assert source["source_name"]
+        assert source["source_version"]
+        assert source["references"]
+        assert source["control_id"] == "network.public-ingress"
+        assert source["provider"] in ("aws", "generic")
+    assert all(source["source_name"] in context for source in sources)
+
+
 def test_retrieval_benchmark_meets_recall_at_3_and_precision_at_3():
     benchmark = [
         ("IAM role wildcard permissions", "identity.least-privilege", "aws", {"IAM-001"}),
@@ -502,10 +521,15 @@ def test_ingestion_rejects_invalid_or_empty_payloads():
 
 
 def test_json_upload_loader_accepts_bounded_object_export():
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", encoding="utf-8") as upload:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", encoding="utf-8", delete=False
+    ) as upload:
         json.dump({"Results": []}, upload)
-        upload.flush()
-        assert load_json_upload(upload.name) == {"Results": []}
+        upload_path = upload.name
+    try:
+        assert load_json_upload(upload_path) == {"Results": []}
+    finally:
+        os.unlink(upload_path)
 
     try:
         load_json_upload("finding.txt")
@@ -619,6 +643,64 @@ def test_memory_max_sessions():
 def test_memory_risk_summary_empty():
     m = ConversationMemory()
     assert m.get_risk_summary("nonexistent") is None
+
+
+# ── Session Registry Tests ──
+
+def test_sessions_are_generated_server_side_for_unowned_callers():
+    registry = SessionRegistry()
+    first, first_created = registry.resolve()
+    second, second_created = registry.resolve()
+    assert first_created and second_created
+    assert first != second
+    assert first.startswith("session_")
+
+
+def test_blank_requested_ids_never_become_shared_sessions():
+    registry = SessionRegistry()
+    blank, _ = registry.resolve("")
+    whitespace, _ = registry.resolve("   ")
+    assert blank and whitespace
+    assert blank != whitespace
+
+
+def test_each_owner_keeps_one_sticky_session():
+    registry = SessionRegistry()
+    alpha, created = registry.resolve(owner="browser-alpha")
+    again, created_again = registry.resolve(owner="browser-alpha")
+    beta, _ = registry.resolve(owner="browser-beta")
+    assert created
+    assert not created_again
+    assert alpha == again
+    assert beta != alpha
+
+
+def test_owners_cannot_address_sessions_they_do_not_own():
+    registry = SessionRegistry()
+    alpha, _ = registry.resolve(owner="browser-alpha")
+    beta, beta_created = registry.resolve(
+        requested=alpha, owner="browser-beta"
+    )
+    assert beta_created
+    assert beta != alpha
+    still_alpha, _ = registry.resolve(requested="session_intruder", owner="browser-alpha")
+    assert still_alpha == alpha
+
+
+def test_explicit_session_ids_are_honored_without_an_owner():
+    registry = SessionRegistry()
+    assert registry.resolve("review-42") == ("review-42", False)
+    assert registry.resolve(create=False) == (None, False)
+    assert registry.resolve(owner="browser-alpha", create=False) == (None, False)
+
+
+def test_session_bindings_are_capped_at_capacity():
+    registry = SessionRegistry(max_bound_sessions=2)
+    registry.resolve(owner="browser-1")
+    registry.resolve(owner="browser-2")
+    registry.resolve(owner="browser-3")
+    assert registry.resolve(owner="browser-1", create=False) == (None, False)
+    assert registry.resolve(owner="browser-3", create=False)[0] is not None
 
 
 # ── Chain of Thought Tests ──
