@@ -273,7 +273,7 @@ def analyze_uploaded_findings(source, upload, session_id=None, request=None):
 
 def _authorize_handoff(access_token):
     """Require the deployment's handoff token before any GitHub write."""
-    expected = os.getenv("GITHUB_HANDOFF_TOKEN")
+    expected = str(os.getenv("GITHUB_HANDOFF_TOKEN") or "").strip()
     if not expected:
         raise GitHubWorkflowError(
             "GitHub handoff is disabled: set GITHUB_HANDOFF_TOKEN in the app environment."

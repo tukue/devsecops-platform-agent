@@ -263,3 +263,17 @@ def test_github_handoff_requires_access_token_then_allowlist(monkeypatch):
     monkeypatch.delenv("GITHUB_ALLOWED_REPOSITORIES", raising=False)
     no_allowlist = app.create_github_issue(assessment, "org/repo", "correct-horse")
     assert "GITHUB_ALLOWED_REPOSITORIES" in no_allowlist["error"]
+
+
+def test_github_handoff_token_comparison_is_whitespace_tolerant(monkeypatch):
+    assessment = {"control_id": "c", "severity": "high"}
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "  correct-horse \n")
+    monkeypatch.delenv("GITHUB_ALLOWED_REPOSITORIES", raising=False)
+
+    padded = app.create_github_issue(assessment, "org/repo", "correct-horse")
+    assert "Invalid handoff access token" not in padded.get("error", "")
+    assert "GITHUB_ALLOWED_REPOSITORIES" in padded["error"]
+
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "   ")
+    blank = app.create_github_issue(assessment, "org/repo", "correct-horse")
+    assert "disabled" in blank["error"]
