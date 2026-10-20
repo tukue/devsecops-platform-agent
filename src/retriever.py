@@ -15,6 +15,39 @@ CATEGORY_SYNONYMS = {
     "data": ["storage", "database", "encryption", "backup", "pii", "phi", "gdpr", "compliance"],
 }
 
+DEFAULT_SOURCE_ID = "unknown"
+DEFAULT_TITLE = "Untitled knowledge entry"
+DEFAULT_CATEGORY = "Uncategorized"
+DEFAULT_CONTROL = ""
+DEFAULT_SEVERITY = "unknown"
+DEFAULT_CONTROL_ID = "unclassified"
+DEFAULT_PROVIDER = "generic"
+DEFAULT_SOURCE_VERSION = "unspecified"
+DEFAULT_VALIDATION = "Review with the owning team."
+DEFAULT_ROLLBACK_GUIDANCE = (
+    "Validate dependencies and prepare a rollback plan before changes."
+)
+
+SOURCE_FIELDS = (
+    "id",
+    "title",
+    "category",
+    "severity",
+    "relevance",
+    "control",
+    "control_id",
+    "provider",
+    "source_name",
+    "source_version",
+    "references",
+    "validation",
+    "rollback_guidance",
+)
+
+# Fields every knowledge-base entry must define for retrieval and ranking to
+# read them with direct subscript access.
+REQUIRED_KB_FIELDS = ("id", "title", "category", "severity", "finding", "remediation")
+
 FINDING_SYNONYMS = {
     "publicly accessible": ["exposed", "open to internet", "world-readable", "public", "0.0.0.0/0"],
     "hardcoded": ["committed", "embedded", "in code", "plaintext", "clear text"],
@@ -57,7 +90,61 @@ def _expand_query(query):
 def _load_kb():
     path = os.path.join(DATA_DIR, "security_kb.json")
     with open(path, "r") as f:
-        return json.load(f)
+        entries = json.load(f)
+    _validate_kb(entries)
+    return entries
+
+
+def _validate_kb(entries):
+    """Fail fast on malformed knowledge-base entries.
+
+    Retrieval and ranking read these fields with direct subscript access, so a
+    single entry missing one of them would crash every analysis instead of
+    surfacing a clear data problem at startup.
+    """
+    if not isinstance(entries, list):
+        raise ValueError("security_kb.json must contain a list of knowledge-base entries")
+
+    problems = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            problems.append("entry {}: not an object".format(index))
+            continue
+        missing = [field for field in REQUIRED_KB_FIELDS if not entry.get(field)]
+        if missing:
+            problems.append("entry {}: missing {}".format(index, ", ".join(missing)))
+
+    if problems:
+        raise ValueError("security_kb.json is invalid -> " + "; ".join(problems))
+
+
+def build_source(entry, relevance):
+    """Build the shared retrieval source record.
+
+    Every consumer of retrieval results reads this one schema: app.py builds
+    citations from `source_name`, `source_version`, and `references`, while the
+    grounding metrics read `id`, `source_name`, `source_version`, `references`,
+    `control_id`, and `provider`. Optional knowledge-base fields always fall
+    back to explicit defaults so no consumer can raise a KeyError.
+    """
+    return {
+        "id": entry.get("id") or DEFAULT_SOURCE_ID,
+        "title": entry.get("title") or DEFAULT_TITLE,
+        "category": entry.get("category") or DEFAULT_CATEGORY,
+        "severity": entry.get("severity") or DEFAULT_SEVERITY,
+        "relevance": relevance,
+        "control": entry.get("control") or DEFAULT_CONTROL,
+        "control_id": entry.get("control_id") or DEFAULT_CONTROL_ID,
+        "provider": entry.get("provider") or DEFAULT_PROVIDER,
+        "source_name": entry.get("source_name") or (entry.get("title") or DEFAULT_TITLE),
+        "source_version": entry.get("version")
+        or entry.get("source_version")
+        or DEFAULT_SOURCE_VERSION,
+        "references": list(entry.get("references") or []),
+        "validation": entry.get("validation") or DEFAULT_VALIDATION,
+        "rollback_guidance": entry.get("rollback_guidance")
+        or DEFAULT_ROLLBACK_GUIDANCE,
+    }
 
 
 class SecurityRetriever:
@@ -224,36 +311,28 @@ class SecurityRetriever:
         context_parts = []
         sources = []
         for i, r in enumerate(results, 1):
-            # Build citation
-            citation = f"Citation: [{i}] {r['id']}: {r['title']} (Control: {r.get('control', 'N/A')})"
-            if r.get('provider'):
-                citation += f" | Provider: {r['provider']}"
-
-            # Build validation guidance
-            validation = ""
-            if r.get("severity") in ("critical", "high"):
-                validation = f"\n    **Validation Required**: This finding has {r['severity']} severity - validate remediation before applying.\n    **Validation:** Manual verification required before deployment"
-
-            # Build rollback/dependency warning
-            rollback_warning = ""
-            if r.get("severity") in ("critical", "high"):
-                rollback_warning = f"\n    **Rollback/dependencies:** Critical/high findings may have infrastructure dependencies - test remediation in staging first."
-
+            source = build_source(r, r["relevance_score"])
+            references = source["references"]
+            citation = "; ".join(references) if references else "Source reference unavailable"
+            severity = source["severity"]
+            severity_warning = ""
+            if severity in ("critical", "high"):
+                severity_warning = (
+                    f"\n    **Validation Required**: This finding has {severity} severity - "
+                    "validate remediation before applying."
+                    f"\n    **Rollback/dependencies:** {severity.capitalize()} findings may have "
+                    "infrastructure dependencies - test remediation in staging first."
+                )
             context_parts.append(
-                f"{citation}\n"
+                f"[{i}] {source['title']} (Category: {source['category']}, Severity: {severity}, "
+                f"Control: {source['control_id']}, Provider: {source['provider']})\n"
                 f"    Finding: {r['finding']}\n"
-                f"    Remediation: {r['remediation']}{validation}{rollback_warning}"
+                f"    Remediation: {r['remediation']}\n"
+                f"    Validation: {source['validation']}\n"
+                f"    Rollback/dependencies: {source['rollback_guidance']}\n"
+                f"    Citation: {source['source_name']} v{source['source_version']} ({citation})"
+                f"{severity_warning}"
             )
-            sources.append({
-                "id": r["id"],
-                "title": r["title"],
-                "category": r["category"],
-                "control": r.get("control", ""),
-                "provider": r.get("provider", ""),
-                "relevance": r["relevance_score"],
-                "severity": r.get("severity", ""),
-                "source_version": r.get("version", "1.0"),
-                "references": r.get("references", []),
-            })
+            sources.append(source)
 
         return "\n\n".join(context_parts), sources

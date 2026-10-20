@@ -1,6 +1,5 @@
 import spaces
 import gradio as gr
-import threading
 import os
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
@@ -10,6 +9,7 @@ from src.providers import ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
 from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
 from src.memory import ConversationMemory
+from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
 from src.output_filter import filter_output
@@ -44,15 +44,18 @@ button#analyze-button:focus-visible {
 retriever = SecurityRetriever(top_k=5)
 classifier = EnsembleClassifier(confidence_threshold=0.55)
 memory = ConversationMemory(max_sessions=10)
+sessions = SessionRegistry()
 provider_router = ProviderRouter(enable_azure=False, enable_gcp=False)
 
-SESSION_COUNTER = 0
-SESSION_LOCK = threading.Lock()
+
+def _request_owner(request):
+    """Map a Gradio request to the owner key its sessions are bound to."""
+    if request is None:
+        return None
+    return getattr(request, "session_hash", None)
 
 
-def analyze_finding(finding, session_id=None, metadata=None):
-    global SESSION_COUNTER
-
+def analyze_finding(finding, session_id=None, metadata=None, owner=None):
     trace_id = None
     from src.observability import _get_trace_id
     trace_id = _get_trace_id()
@@ -64,11 +67,8 @@ def analyze_finding(finding, session_id=None, metadata=None):
             record_error("validation", errors[0])
             return {"error": errors[0]}
 
-    if session_id is None:
-        with SESSION_LOCK:
-            global SESSION_COUNTER
-            SESSION_COUNTER += 1
-            session_id = f"session_{SESSION_COUNTER}"
+    session_id, session_created = sessions.resolve(session_id, owner)
+    if session_created:
         record_session(session_id)
 
     with PerformanceTimer("classification", trace_id):
@@ -215,7 +215,6 @@ def analyze_finding(finding, session_id=None, metadata=None):
         "session_id": session_id,
         "trace_id": trace_id,
         "risk": classification["severity"] in {"critical", "high"},
-        "evidence": finding,
         "remediation": REMEDIATIONS.get(
             classification["category"],
             "Review the finding and apply standard security hardening practices.",
@@ -226,10 +225,6 @@ def analyze_finding(finding, session_id=None, metadata=None):
         "source_citation": rec_source_citation,
     }
 
-    risk_summary = memory.get_risk_summary(session_id)
-    if risk_summary:
-        result["session_risk_summary"] = risk_summary
-
     if warnings:
         result["input_warnings"] = warnings
 
@@ -238,22 +233,38 @@ def analyze_finding(finding, session_id=None, metadata=None):
 
     memory.add_interaction(session_id, finding, result)
 
+    risk_summary = memory.get_risk_summary(session_id)
+    if risk_summary:
+        result["session_risk_summary"] = risk_summary
+
     return result
 
 
-def analyze_ingested_findings(source, payload, session_id=None):
+def analyze_ingested_findings(source, payload, session_id=None, owner=None):
     """Analyze exported scanner findings while retaining manual analysis compatibility."""
+    records = normalize_payload(source, payload)
+    if not records:
+        return []
+
+    # Resolve one session for the whole batch so every finding in the export
+    # lands in the same conversation history instead of minting a session per
+    # finding.
+    batch_session, session_created = sessions.resolve(session_id, owner)
+    if session_created:
+        record_session(batch_session)
     return [
-        analyze_finding(finding, session_id=session_id, metadata=metadata)
-        for finding, metadata in normalize_payload(source, payload)
+        analyze_finding(finding, session_id=batch_session, metadata=metadata, owner=owner)
+        for finding, metadata in records
     ]
 
 
-def analyze_uploaded_findings(source, upload, session_id=None):
+def analyze_uploaded_findings(source, upload, session_id=None, request=None):
     """UI-safe JSON upload entry point; manual text analysis remains available."""
     try:
         payload = load_json_upload(upload)
-        results = analyze_ingested_findings(source, payload, session_id)
+        results = analyze_ingested_findings(
+            source, payload, session_id, owner=_request_owner(request)
+        )
         return {"source": source, "finding_count": len(results), "results": results}
     except FindingIngestionError as exc:
         return {"error": str(exc)}
@@ -276,21 +287,24 @@ def comment_on_github_pr(assessment, repository, pull_request):
 
 
 @spaces.GPU
-def review_finding(finding, session_id=None):
+def review_finding(finding, session_id=None, request: gr.Request = None):
     try:
-        return analyze_finding(finding, session_id)
+        return analyze_finding(finding, session_id, owner=_request_owner(request))
     except Exception as e:
         record_error("exception", str(e))
         return {"error": str(e)}
 
 
 @spaces.GPU
-def review_finding_with_cot(finding, session_id=None):
+def review_finding_with_cot(finding, session_id=None, request: gr.Request = None):
     try:
-        result = analyze_finding(finding, session_id)
+        result = analyze_finding(finding, session_id, owner=_request_owner(request))
+        if "error" in result:
+            return result
 
         rag_context, _ = retriever.build_context(finding, top_k=5)
-        memory_context = memory.get_context(session_id) if session_id else ""
+        active_session = result["session_id"]
+        memory_context = memory.get_context(active_session)
 
         classification = {
             "category": result["category"],
@@ -314,9 +328,14 @@ def review_finding_with_cot(finding, session_id=None):
         return {"error": str(e)}
 
 
-def clear_session(session_id):
-    memory.clear_session(session_id)
-    return {"status": f"Session {session_id} cleared."}
+def clear_session(session_id=None, request: gr.Request = None):
+    active_session, _ = sessions.resolve(
+        session_id, _request_owner(request), create=False
+    )
+    if not active_session:
+        return {"status": "No active session to clear."}
+    memory.clear_session(active_session)
+    return {"status": f"Session {active_session} cleared."}
 
 
 def get_observability_metrics():
@@ -359,10 +378,9 @@ with gr.Blocks(
                 label="Infrastructure security finding",
                 placeholder="Example: A Kubernetes workload runs as root in a privileged container.",
             )
-            session_input = gr.Textbox(
-                lines=1,
-                label="Session ID (optional — for multi-turn context)",
-                placeholder="Leave blank for new session",
+            gr.Markdown(
+                "Sessions are created by the server and stay bound to this browser "
+                "session; the assigned session ID is returned with each assessment."
             )
 
             with gr.Accordion("Upload scanner export (JSON)", open=False):
@@ -427,22 +445,22 @@ with gr.Blocks(
 
     submit_btn.click(
         fn=review_finding,
-        inputs=[finding_input, session_input],
+        inputs=[finding_input],
         outputs=[output_json],
     )
     submit_cot_btn.click(
         fn=review_finding_with_cot,
-        inputs=[finding_input, session_input],
+        inputs=[finding_input],
         outputs=[output_json],
     )
     upload_btn.click(
         fn=analyze_uploaded_findings,
-        inputs=[upload_source, finding_upload, session_input],
+        inputs=[upload_source, finding_upload],
         outputs=[output_json],
     )
     clear_btn.click(
         fn=clear_session,
-        inputs=[session_input],
+        inputs=[],
         outputs=[output_json],
     )
 
