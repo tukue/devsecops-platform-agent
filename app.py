@@ -1,5 +1,6 @@
 import spaces
 import gradio as gr
+import hmac
 import os
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
@@ -270,15 +271,29 @@ def analyze_uploaded_findings(source, upload, session_id=None, request=None):
         return {"error": str(exc)}
 
 
-def create_github_draft_issue(assessment, repository):
+def _authorize_handoff(access_token):
+    """Require the deployment's handoff token before any GitHub write."""
+    expected = os.getenv("GITHUB_HANDOFF_TOKEN")
+    if not expected:
+        raise GitHubWorkflowError(
+            "GitHub handoff is disabled: set GITHUB_HANDOFF_TOKEN in the app environment."
+        )
+    presented = str(access_token or "").strip()
+    if not presented or not hmac.compare_digest(presented, expected):
+        raise GitHubWorkflowError("Invalid handoff access token.")
+
+
+def create_github_issue(assessment, repository, access_token=None):
     try:
-        return GitHubWorkflowClient(repository).create_draft_issue(assessment)
+        _authorize_handoff(access_token)
+        return GitHubWorkflowClient(repository).create_advisory_issue(assessment)
     except GitHubWorkflowError as exc:
         return {"error": str(exc)}
 
 
-def comment_on_github_pr(assessment, repository, pull_request):
+def comment_on_github_pr(assessment, repository, pull_request, access_token=None):
     try:
+        _authorize_handoff(access_token)
         return GitHubWorkflowClient(repository).comment_on_pull_request(
             pull_request, assessment
         )
@@ -366,9 +381,9 @@ with gr.Blocks(
 ) as demo:
     gr.Markdown("# AI DevSecOps Advisor")
     gr.Markdown(
-        "Classifies infrastructure risks with RAG, multi-model ensemble, "
-        "conversation memory, and chain-of-thought reasoning. "
-        "No infrastructure changes are executed."
+        "Classifies infrastructure risks with retrieval-assisted context, a multi-model "
+        "ensemble, conversation memory, and a structured decision explanation rendered "
+        "from Python templates. No infrastructure changes are executed."
     )
 
     with gr.Row():
@@ -398,7 +413,7 @@ with gr.Blocks(
                 submit_btn = gr.Button(
                     "Evaluate Finding", variant="primary", elem_id="analyze-button"
                 )
-                submit_cot_btn = gr.Button("Analyze with Chain-of-Thought")
+                submit_cot_btn = gr.Button("Analyze with decision explanation")
                 clear_btn = gr.Button("Clear Session")
 
             examples = gr.Examples(
@@ -418,14 +433,20 @@ with gr.Blocks(
         observability_output = gr.JSON(label="Metrics / Health")
 
     with gr.Accordion("GitHub workflow handoff", open=False):
-        gr.Markdown("Creates a draft issue or an advisory PR comment. Set `GITHUB_TOKEN` in the app environment.")
+        gr.Markdown(
+            "Opens an ordinary issue titled `[Agent draft] …` (GitHub's API has no draft "
+            "issues) or adds an advisory comment on a pull request. Requires `GITHUB_TOKEN`, "
+            "an allowlist in `GITHUB_ALLOWED_REPOSITORIES`, and `GITHUB_HANDOFF_TOKEN` in "
+            "the app environment."
+        )
         github_repository = gr.Textbox(
-            label="GitHub repository (owner/repository)",
+            label="GitHub repository (owner/repository, allowlisted)",
             value=os.getenv("GITHUB_REPOSITORY", ""),
         )
         pull_request_number = gr.Number(label="Pull request number", precision=0)
+        handoff_token = gr.Textbox(label="Handoff access token", type="password")
         with gr.Row():
-            draft_issue_btn = gr.Button("Create draft issue from assessment")
+            draft_issue_btn = gr.Button("Open draft-marked issue from assessment")
             pr_comment_btn = gr.Button("Comment on pull request")
         workflow_output = gr.JSON(label="GitHub handoff result")
 
@@ -433,13 +454,13 @@ with gr.Blocks(
     health_btn.click(fn=get_system_health, outputs=[observability_output])
     reset_btn.click(fn=reset_observability_metrics, outputs=[observability_output])
     draft_issue_btn.click(
-        fn=create_github_draft_issue,
-        inputs=[output_json, github_repository],
+        fn=create_github_issue,
+        inputs=[output_json, github_repository, handoff_token],
         outputs=[workflow_output],
     )
     pr_comment_btn.click(
         fn=comment_on_github_pr,
-        inputs=[output_json, github_repository, pull_request_number],
+        inputs=[output_json, github_repository, pull_request_number, handoff_token],
         outputs=[workflow_output],
     )
 

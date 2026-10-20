@@ -26,7 +26,12 @@ from src.findings import canonicalize_finding, infer_provider
 from src.controls import resolve_control
 from src.providers import AWSProviderAdapter, GenericProviderAdapter, ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
-from src.github_workflow import GitHubWorkflowClient, build_work_item, finding_fingerprint
+from src.github_workflow import (
+    GitHubWorkflowClient,
+    GitHubWorkflowError,
+    build_work_item,
+    finding_fingerprint,
+)
 
 
 # ── Input Validation Tests ──
@@ -381,17 +386,19 @@ def test_github_work_item_contains_reviewable_evidence_and_is_fingerprint_dedupl
     assert "no source code or infrastructure was modified" in body
 
 
-def test_github_duplicate_issue_is_reused_without_posting():
+def test_github_duplicate_issue_is_reused_without_posting(monkeypatch):
+    monkeypatch.setenv("GITHUB_ALLOWED_REPOSITORIES", "org/repo")
     assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
     fingerprint, _, body = build_work_item(assessment)
     client = GitHubWorkflowClient("org/repo", token="test")
     client._open_issues = lambda: [{"number": 7, "html_url": "https://github.test/7", "body": body}]
     client._request = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate must not POST"))
-    result = client.create_draft_issue(assessment)
+    result = client.create_advisory_issue(assessment)
     assert result == {"status": "existing", "number": 7, "url": "https://github.test/7"}
 
 
 def test_github_duplicate_pr_comment_is_reused(monkeypatch):
+    monkeypatch.setenv("GITHUB_ALLOWED_REPOSITORIES", "org/repo")
     assessment = {"control_id": "c", "severity": "high", "finding": {"provider": "aws", "resource_id": "r"}}
     fingerprint, _, body = build_work_item(assessment)
     client = GitHubWorkflowClient("org/repo", token="test")
@@ -408,6 +415,39 @@ def test_github_duplicate_pr_comment_is_reused(monkeypatch):
     client._request = request
     result = client.comment_on_pull_request(4, assessment)
     assert result == {"status": "existing", "url": "https://github.test/comment/1"}
+
+
+def test_github_client_enforces_repository_allowlist(monkeypatch):
+    monkeypatch.delenv("GITHUB_ALLOWED_REPOSITORIES", raising=False)
+    with pytest.raises(GitHubWorkflowError, match="GITHUB_ALLOWED_REPOSITORIES"):
+        GitHubWorkflowClient("org/repo", token="test")
+
+    monkeypatch.setenv("GITHUB_ALLOWED_REPOSITORIES", "org/other")
+    with pytest.raises(GitHubWorkflowError, match="not in GITHUB_ALLOWED_REPOSITORIES"):
+        GitHubWorkflowClient("org/repo", token="test")
+
+    monkeypatch.setenv("GITHUB_ALLOWED_REPOSITORIES", "org/repo, other/repo")
+    assert GitHubWorkflowClient("org/repo", token="test").repository == "org/repo"
+
+    monkeypatch.setenv("GITHUB_ALLOWED_REPOSITORIES", "not-a-repo-entry")
+    with pytest.raises(GitHubWorkflowError, match="owner/repository"):
+        GitHubWorkflowClient("org/repo", token="test")
+
+
+def test_github_work_item_renders_string_evidence_as_one_bullet():
+    assessment = {
+        "control_id": "c",
+        "severity": "high",
+        "evidence": "SSH open to 0.0.0.0/0",
+    }
+    _, _, body = build_work_item(assessment)
+    assert "- SSH open to 0.0.0.0/0" in body
+
+
+def test_github_work_item_tolerates_non_list_evidence():
+    assessment = {"control_id": "c", "severity": "low", "evidence": 123}
+    _, _, body = build_work_item(assessment)
+    assert "- Not provided" in body
 
 
 # ── Ensemble Classifier Tests ──

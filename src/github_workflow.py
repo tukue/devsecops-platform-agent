@@ -1,4 +1,10 @@
-"""Explicit, draft-only GitHub issue and pull-request handoff."""
+"""GitHub issue and pull-request handoff for advisory assessments.
+
+Issues created here are ordinary GitHub issues titled ``[Agent draft] ...``
+and labelled by their body as advisory drafts awaiting human review; GitHub's
+REST API has no true draft issues, and the code and UI say exactly that.
+Writes are confined to an explicit repository allowlist.
+"""
 
 import hashlib
 import json
@@ -17,6 +23,27 @@ _ISSUE_DEDUP_LOCK = threading.Lock()
 
 class GitHubWorkflowError(RuntimeError):
     pass
+
+
+def allowed_repositories():
+    """Return the allowlisted repositories from GITHUB_ALLOWED_REPOSITORIES.
+
+    The deployment's token may reach many repositories; this list is the
+    authorization boundary that decides which ones callers may target.
+    """
+    raw = os.getenv("GITHUB_ALLOWED_REPOSITORIES") or ""
+    repositories = [item.strip() for item in raw.split(",") if item.strip()]
+    if not repositories:
+        raise GitHubWorkflowError(
+            "Set GITHUB_ALLOWED_REPOSITORIES (comma-separated owner/repository) "
+            "to authorize GitHub handoff."
+        )
+    invalid = [item for item in repositories if not REPOSITORY_PATTERN.fullmatch(item)]
+    if invalid:
+        raise GitHubWorkflowError(
+            "GITHUB_ALLOWED_REPOSITORIES must contain owner/repository entries only."
+        )
+    return repositories
 
 
 def finding_fingerprint(assessment):
@@ -38,6 +65,19 @@ def _safe_markdown(value):
     return text.replace("`", "'")
 
 
+def _normalize_evidence(value):
+    """Return evidence as a list of non-empty strings for bullet rendering.
+
+    A plain string is treated as a single evidence item, so a malformed or
+    hand-edited assessment can never be iterated character by character.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
 def build_work_item(assessment):
     if not isinstance(assessment, dict) or assessment.get("error"):
         raise GitHubWorkflowError("A successful assessment is required.")
@@ -48,7 +88,10 @@ def build_work_item(assessment):
     resource = (assessment.get("finding") or {}).get("resource_id") or "resource unavailable"
     title = f"[Agent draft] {severity.upper()} {control_id}: {resource}"
 
-    evidence = assessment.get("evidence") or (assessment.get("finding") or {}).get("evidence", [])
+    evidence = _normalize_evidence(
+        assessment.get("evidence")
+        or (assessment.get("finding") or {}).get("evidence")
+    )
     evidence_lines = "\n".join(f"- {_safe_markdown(item)}" for item in evidence) or "- Not provided"
     citation_lines = []
     for citation in assessment.get("citations", []):
@@ -80,11 +123,20 @@ def build_work_item(assessment):
 
 
 class GitHubWorkflowClient:
-    """Uses GitHub REST only when an explicit issue or PR handoff is requested."""
+    """Uses GitHub REST only when an explicit issue or PR handoff is requested.
+
+    Construction fails unless the target repository appears in
+    GITHUB_ALLOWED_REPOSITORIES, so a configured token can only reach
+    repositories the deployment has explicitly authorized.
+    """
 
     def __init__(self, repository, token=None, timeout=10):
         if not isinstance(repository, str) or not REPOSITORY_PATTERN.fullmatch(repository):
             raise GitHubWorkflowError("Repository must use the owner/repository format.")
+        if repository not in allowed_repositories():
+            raise GitHubWorkflowError(
+                f"{repository} is not in GITHUB_ALLOWED_REPOSITORIES."
+            )
         self.repository = repository
         self.token = token or os.getenv("GITHUB_TOKEN")
         if not self.token:
@@ -128,7 +180,13 @@ class GitHubWorkflowClient:
                 break
         return issues
 
-    def create_draft_issue(self, assessment):
+    def create_advisory_issue(self, assessment):
+        """Open an ordinary issue titled ``[Agent draft] ...`` for review.
+
+        GitHub's REST API cannot create draft issues, so this publishes a
+        normal issue whose title and body mark it as advisory output that a
+        human must review before acting.
+        """
         fingerprint, title, body = build_work_item(assessment)
         marker = f"<!-- devsecops-finding:{fingerprint} -->"
         with _ISSUE_DEDUP_LOCK:
@@ -138,7 +196,7 @@ class GitHubWorkflowClient:
             created = self._request(
                 "POST", f"/repos/{self.repository}/issues", {"title": title, "body": body}
             )
-            return {"status": "draft_created", "number": created["number"], "url": created["html_url"]}
+            return {"status": "issue_created", "number": created["number"], "url": created["html_url"]}
 
     def comment_on_pull_request(self, pull_request, assessment):
         try:
