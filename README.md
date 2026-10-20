@@ -13,7 +13,7 @@ tags:
   - platform-engineering
   - sre
   - security-advisor
-  - rag
+  - retrieval-assisted
   - guardrails
   - portfolio
 ---
@@ -23,7 +23,7 @@ tags:
 [![Live Demo](https://img.shields.io/badge/🚀-Live%20Demo-brightgreen)](https://huggingface.co/spaces/Tukue/platform-eng-agent-advisor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/release/python-3100/)
-[![Gradio](https://img.shields.io/badge/Gradio-4.x-orange)](https://gradio.app/)
+[![Gradio](https://img.shields.io/badge/Gradio-6.x-orange)](https://gradio.app/)
 
 ## 🎯 Live Demo — **Click to Try**
 
@@ -37,22 +37,22 @@ tags:
 
 | What You'll See | Where to Look |
 |---|---|
-| **Production-ready AI security advisor** with RAG + ensemble classification | [Architecture](#system-architecture) |
+| **Security advisor with retrieval-assisted classification and remediation guidance** | [Architecture](#system-architecture) |
 | **Responsible AI practices**: 6-layer prompt injection defense, PII masking, output filtering | [AI Agent Features](#ai-agent-features) |
 | **Clean, modular codebase** with separation of concerns | [Repository Structure](#repository-structure) |
-| **Comprehensive test suite** (72 tests) covering all modules | [tests/](tests/) |
-| **Observability built-in**: structured logging, metrics, health checks | [Observability](#observability-and-monitoring-architecture) |
-| **Deployment configs** for Docker, HF Spaces, multi-cloud | [Roadmap](#roadmap) |
+| **Comprehensive test suite** (110 tests) covering all modules | [tests/](tests/) |
+| **Observability built-in**: structured logging, in-app metrics, health checks | [Observability](#observability-and-monitoring-architecture) |
+| **Live deployment** on HF Spaces; Docker and multi-cloud configs are planned | [Roadmap](#roadmap) |
 
 **Quick talking points for interviews:**
 - Built a security advisor with hybrid classification: rule-based for known patterns + ensemble zero-shot for novel findings
 - Implemented 6-layer input validation (prompt injection, encoding evasion, multilingual, separators, PII, rate limiting)
-- Designed RAG pipeline with TF-IDF + keyword hybrid search, query expansion, and category/severity reranking
-- Added chain-of-thought reasoning for transparent, auditable classification decisions
+- Designed retrieval-assisted pipeline with TF-IDF + keyword hybrid search, query expansion, and category/severity reranking
+- Added structured decision explanation — step-by-step reasoning rendered from Python templates — for transparent, auditable classification decisions
 - Built session memory with risk summaries and context-aware recommendations
-- Comprehensive output filtering: PII masking, unsafe advice blocking, hallucination detection
-- Full observability stack: structured logs, Prometheus metrics, health checks, Grafana-ready dashboards
-- Modular Python architecture: UI ↔ validation ↔ RAG ↔ classification ↔ memory ↔ reasoning ↔ filtering
+- Comprehensive output filtering: PII masking, unsafe advice blocking, heuristic checks for overconfident language
+- Observability built in: structured logging, in-app metrics, health checks (Prometheus/Grafana export planned)
+- Modular Python architecture: UI ↔ validation ↔ retrieval ↔ classification ↔ memory ↔ explanation ↔ filtering
 
 ---
 
@@ -106,20 +106,21 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 ## AI Agent Features
 
-### Retrieval-Augmented Generation (RAG)
+### Retrieval-Assisted Context
 
 - **Term Frequency-Inverse Document Frequency (TF-IDF) + keyword hybrid search** over a 20-entry security knowledge base
 - **Query expansion** with category and finding synonyms for better retrieval
 - **Reranking** with category boosting and severity weighting
 - Returns relevant remediation guidance from the knowledge base alongside the classification
+- Retrieved entries are cited in the response payload; classification and remediation text come from rules and templates — the app produces no generative LLM answer from retrieved context
 
-### Chain-of-Thought Reasoning
+### Structured Decision Explanation
 
-- Step-by-step explanation of how the finding was classified
+- Step-by-step explanation of how the finding was classified, rendered from Python templates (deterministic text assembly, not an LLM response)
 - Shows which method was used (rule-based detection vs. ensemble)
 - Explains severity assessment with specific reasons
 - Reports human review requirements and recommended owner
-- Activated via the "Analyze with Chain-of-Thought" button
+- Activated via the "Analyze with decision explanation" button
 
 ### Conversation Memory
 
@@ -130,7 +131,7 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 ### Multi-Model Ensemble
 
-- Rule-based classification for deterministic pattern detection (confidence: 1.0)
+- Rule-based classification with deterministic pattern matching (reported as fixed high confidence; a rule match does not guarantee the classification is correct)
 - Zero-shot classification using multiple transformer models when rules don't apply
 - Weighted ensemble voting across models
 - Agreement tracking — flags when models disagree for human review
@@ -148,7 +149,7 @@ SRE teams balance reliability, operational risk, and engineering velocity. The a
 
 - **PII masking**: Redacts sensitive data from responses
 - **Unsafe advice blocking**: Prevents dangerous recommendations (run as root, disable firewall, commit secrets)
-- **Hallucination detection**: Flags overconfident claims ("guaranteed", "100% secure")
+- **Heuristic checks for overconfident language**: Flags phrases like "guaranteed" or "100% secure" (keyword heuristics only — they do not verify factual accuracy)
 - **Prompt leakage detection**: Prevents the model from revealing system instructions
 - **Remediation quality validation**: Checks that responses include relevant security guidance
 
@@ -165,7 +166,7 @@ flowchart TB
         RL[Rate Limiter]
     end
 
-    subgraph RAG["Retrieval-Augmented Generation"]
+    subgraph RAG["Retrieval-Assisted Context"]
         QE[Query Expansion\nSynonym Loading]
         TFIDF["Term Frequency-Inverse\nDocument Frequency Search"]
         KW["Keyword Index\nExact Lookup"]
@@ -186,7 +187,7 @@ flowchart TB
     end
 
     subgraph REASON["Reasoning Layer"]
-        COT["Chain-of-Thought\nStep-by-Step Reasoning"]
+        COT["Decision Explanation\nTemplate-Generated Steps"]
         owner["Owner Resolver\nTeam Assignment"]
     end
 
@@ -225,7 +226,7 @@ flowchart TB
     RESP --> RESULT([Security Assessment\nCategory + Severity + Remediation])
 ```
 
-### Retrieval-Augmented Generation (RAG) Pipeline
+### Retrieval-Assisted Context Pipeline
 
 ```mermaid
 flowchart LR
@@ -271,7 +272,7 @@ flowchart TD
     L5["Layer 5: PII Detection\nCredit Cards, SSN, Email, AWS Keys"]
     L6["Layer 6: Rate Limiting\nPer-Client Throttling"]
 
-    VALID([Valid Input\nProceed to RAG])
+    VALID([Valid Input\nProceed to retrieval])
     BLOCKED([Blocked\nError Response])
 
     INPUT --> L1
@@ -297,7 +298,7 @@ flowchart TD
 
     M1["PII Masking\nRedact Sensitive Data"]
     M2["Unsafe Advice Blocking\nRun as Root, Disable Firewall"]
-    M3["Hallucination Detection\nGuaranteed, 100% Secure"]
+    M3["Overconfident-Language Check\nFlags: Guaranteed, 100% Secure"]
     M4["Prompt Leakage Detection\nSystem Instructions Leak"]
     M5["Remediation Quality Check\nCategory-Specific Keywords"]
 
@@ -319,12 +320,12 @@ flowchart TD
 flowchart TB
     subgraph CURRENT["Current: Single-Agent Gradio App"]
         G["Gradio UI"]
-        A["Agent Core\nRAG + Classification"]
+        A["Agent Core\nRetrieval + Classification"]
         KB2[("Local JSON\nKnowledge Base")]
         G --> A --> KB2
     end
 
-    subgraph EXTENDED["Extended: Production Cloud Deployment"]
+    subgraph EXTENDED["Extended: Production Cloud Deployment (planned)"]
         direction TB
 
         subgraph INGEST["Ingestion Layer"]
@@ -349,7 +350,7 @@ flowchart TB
 
         subgraph RETRIEVE["Retrieval Layer"]
             EMBED["Embedding Service\nSentence Transformers"]
-            RAG2["RAG Pipeline\nHybrid Search"]
+            RAG2["Retrieval Pipeline\nHybrid Search"]
             RERANK2["Reranker\nCross-Encoder"]
         end
 
@@ -385,7 +386,11 @@ flowchart TB
     style EXTENDED fill:#e3f2fd
 ```
 
-### Multi-Cloud Deployment Options
+### Multi-Cloud Deployment Options (planned)
+
+The targets below are design options. The repository currently ships no
+Dockerfile, compose file, or cloud deployment artifacts — Hugging Face Spaces
+is the deployed target.
 
 ```mermaid
 flowchart LR
@@ -442,11 +447,11 @@ flowchart LR
 sequenceDiagram
     participant User
     participant Validation as Input Validation
-    participant RAG as RAG Pipeline
+    participant RAG as Retrieval Pipeline
     participant KB as Knowledge Base
     participant Classify as Classifier
     participant Memory as Session Memory
-    participant CoT as Chain-of-Thought
+    participant CoT as Decision Explanation
     participant Filter as Output Filter
     participant Response as Response
 
@@ -473,7 +478,7 @@ sequenceDiagram
         Memory-->>Classify: Session context
 
         Classify->>CoT: Classification + Context
-        CoT->>CoT: Generate step-by-step reasoning
+        CoT->>CoT: Render explanation from templates
         CoT-->>Filter: Full assessment
 
         Filter->>Filter: PII mask + safety check
@@ -489,7 +494,7 @@ flowchart TB
     subgraph AGENT["Agent Request Processing"]
         REQ([Incoming Request])
         V["Input Validation"]
-        RAG2["RAG Pipeline"]
+        RAG2["Retrieval Pipeline"]
         CLS["Classifier"]
         OUT["Output Filter"]
         RESP([Response])
@@ -508,7 +513,7 @@ flowchart TB
         subgraph METRICS["Metrics Collection"]
             M_req["Request Counters\nby Category, Severity, Method"]
             M_val["Validation Blocks\nby Reason"]
-            M_rag["RAG Retrieval Scores"]
+            M_rag["Retrieval Scores"]
             M_ens["Ensemble Disagreements"]
             M_time["Response Time\nAvg, P95, P99"]
             M_err["Error Counters"]
@@ -524,9 +529,9 @@ flowchart TB
 
     subgraph DASHBOARD["Dashboard Layer"]
         GRADIO["Gradio UI\nMetrics Panel"]
-        PROM["Prometheus\nMetrics Export"]
-        GRAF["Grafana\nDashboards"]
-        ALERT["Alerting\nPagerDuty / Slack"]
+        PROM["Prometheus\nMetrics Export (planned)"]
+        GRAF["Grafana\nDashboards (planned)"]
+        ALERT["Alerting\nPagerDuty / Slack (planned)"]
     end
 
     V -->|"validation events"| M_val
@@ -570,7 +575,7 @@ sequenceDiagram
     Agent->>Agent: Input validation
     Agent->>Metrics: Record validation result
 
-    Agent->>Agent: RAG retrieval
+    Agent->>Agent: Knowledge-base retrieval
     Agent->>Metrics: Record retrieval scores
 
     Agent->>Agent: Classification
@@ -604,8 +609,8 @@ sequenceDiagram
 | validation_blocks_total | Counter | Total input validation rejections |
 | validation_blocks_by_reason | Breakdown | Blocks grouped by reason (prompt_injection, pii_detected, rate_limit) |
 | output_filter_issues_total | Counter | Total output filter issues found |
-| output_filter_issues_by_type | Breakdown | Issues grouped by type (unsafe_advice, hallucination, prompt_leakage) |
-| rag_retrievals_total | Counter | Total RAG retrievals performed |
+| output_filter_issues_by_type | Breakdown | Issues grouped by label (unsafe advice, overconfident language, prompt leakage) |
+| rag_retrievals_total | Counter | Total knowledge-base retrievals performed |
 | rag_retrieval_scores | Histogram | Individual retrieval relevance scores |
 | ensemble_disagreements_total | Counter | Times ensemble models disagreed |
 | human_review_required_total | Counter | Findings flagged for human review |
@@ -642,11 +647,11 @@ The advisor evaluates a submitted finding with layered controls:
 1. **Input validation** blocks prompt injection, PII, and off-topic inputs before processing.
 2. **Severity rules** identify known high-risk indicators, including public exposure, wildcard permissions, root access, privileged containers, and committed secrets.
 3. **Ensemble classification** uses rule matching first, then falls back to multi-model zero-shot classification with weighted voting.
-4. **RAG retrieval** pulls relevant remediation guidance from the security knowledge base.
-5. **Output filtering** masks PII, blocks unsafe advice, and validates response quality.
-6. **Chain-of-thought** provides transparent reasoning for every classification decision.
+4. **Retrieval-assisted context** pulls relevant remediation guidance from the security knowledge base and cites it in the response; no LLM answer is generated from it.
+5. **Output filtering** masks PII, blocks unsafe advice, and validates response quality with heuristic checks.
+6. **Structured decision explanation** renders a transparent, template-generated explanation for every classification decision.
 
-High- and critical-severity results, and results below the confidence threshold, require human review. Automation is disabled by design. Teams must validate recommendations against their environment, change-management process, and approved security policies before acting.
+High- and critical-severity results, and results below the confidence threshold, require human review. Rule matching is deterministic, but a deterministic match does not guarantee a correct classification, and confidence values are heuristics rather than accuracy guarantees. Automation is disabled by design. Teams must validate recommendations against their environment, change-management process, and approved security policies before acting.
 
 ## Example Workflow
 
@@ -699,19 +704,23 @@ python -m pytest tests/ -v
 ├── src/
 │   ├── __init__.py
 │   ├── ensemble.py             # Multi-model ensemble classifier
-│   ├── retriever.py            # TF-IDF + keyword hybrid RAG retriever
+│   ├── retriever.py            # TF-IDF + keyword hybrid retriever
 │   ├── memory.py               # Conversation memory and session state
-│   ├── chain_of_thought.py     # Step-by-step reasoning generator
+│   ├── chain_of_thought.py     # Template-based decision explanation generator
 │   ├── input_validation.py     # 6-layer prompt injection defense
-│   ├── output_filter.py        # PII masking, unsafe advice blocking
+│   ├── output_filter.py        # PII masking, unsafe advice blocking, language heuristics
 │   └── observability.py        # Logging, metrics, tracing, health checks
 ├── tests/
-│   └── test_pipeline.py        # 72 tests across all modules
+│   ├── test_pipeline.py            # Unit tests across all modules
+│   └── test_assessment_integration.py  # End-to-end tests through the Gradio UI
 └── .github/workflows/          # CI/CD workflows
 ```
 
 ## Roadmap
 
+- Package the app as a Docker image with a compose file for local deployment.
+- Export metrics in Prometheus format and ship Grafana dashboards.
+- Multi-cloud deployment templates (AWS, GCP, Azure) beyond the current HF Spaces deployment.
 - Add policy-as-code and approved organizational standards as grounded context.
 - Integrate with CI/CD, infrastructure-as-code scanners, ticketing, and alert-management tools.
 - Include asset criticality, environment, and service ownership in risk prioritization.

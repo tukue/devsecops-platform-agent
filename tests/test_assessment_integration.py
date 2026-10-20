@@ -92,6 +92,7 @@ def test_successful_assessment_returns_grounded_citations_and_guidance():
     assert result["severity"] == "critical"
     assert result["confidence"] > 0
     assert result["evidence"]
+    assert isinstance(result["evidence"], list)
     assert result["validation_step"]
     assert result["rollback_guidance"]
     assert result["human_review_required"]
@@ -244,3 +245,35 @@ def test_clear_session_reports_when_no_session_is_bound():
         "status": "No active session to clear."
     }
     assert "" not in app.memory.sessions
+
+
+def test_github_handoff_requires_access_token_then_allowlist(monkeypatch):
+    assessment = {"control_id": "c", "severity": "high"}
+
+    monkeypatch.delenv("GITHUB_HANDOFF_TOKEN", raising=False)
+    disabled = app.create_github_issue(assessment, "org/repo", "anything")
+    assert "GITHUB_HANDOFF_TOKEN" in disabled["error"]
+
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "correct-horse")
+    wrong = app.create_github_issue(assessment, "org/repo", "wrong")
+    assert "Invalid handoff access token" in wrong["error"]
+    wrong_pr = app.comment_on_github_pr(assessment, "org/repo", 1, "")
+    assert "Invalid handoff access token" in wrong_pr["error"]
+
+    monkeypatch.delenv("GITHUB_ALLOWED_REPOSITORIES", raising=False)
+    no_allowlist = app.create_github_issue(assessment, "org/repo", "correct-horse")
+    assert "GITHUB_ALLOWED_REPOSITORIES" in no_allowlist["error"]
+
+
+def test_github_handoff_token_comparison_is_whitespace_tolerant(monkeypatch):
+    assessment = {"control_id": "c", "severity": "high"}
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "  correct-horse \n")
+    monkeypatch.delenv("GITHUB_ALLOWED_REPOSITORIES", raising=False)
+
+    padded = app.create_github_issue(assessment, "org/repo", "correct-horse")
+    assert "Invalid handoff access token" not in padded.get("error", "")
+    assert "GITHUB_ALLOWED_REPOSITORIES" in padded["error"]
+
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "   ")
+    blank = app.create_github_issue(assessment, "org/repo", "correct-horse")
+    assert "disabled" in blank["error"]
