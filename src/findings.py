@@ -18,6 +18,14 @@ class CanonicalFinding:
     owner: str
     confidence: float
     evidence: tuple[str, ...] = field(default_factory=tuple)
+    finding_id: str | None = None
+    product_arn: str | None = None
+    native_severity: dict = field(default_factory=dict)
+    workflow_status: str | None = None
+    compliance_status: str | None = None
+    record_state: str | None = None
+    resources: list = field(default_factory=list)
+    source_timestamps: dict = field(default_factory=dict)
     account: str | None = None
     region: str | None = None
     environment: str | None = None
@@ -67,6 +75,14 @@ def canonicalize_finding(finding: str, classification: dict[str, Any], control: 
         owner=control["owner"] if control else "Platform Security",
         confidence=float(classification["confidence"]),
         evidence=tuple(evidence),
+        finding_id=metadata.get("finding_id"),
+        product_arn=metadata.get("product_arn"),
+        native_severity=metadata.get("native_severity", {}),
+        workflow_status=metadata.get("workflow_status"),
+        compliance_status=metadata.get("compliance_status"),
+        record_state=metadata.get("record_state"),
+        resources=metadata.get("resources", []),
+        source_timestamps=metadata.get("source_timestamps", {}),
         account=metadata.get("account"),
         region=metadata.get("region"),
         environment=metadata.get("environment"),

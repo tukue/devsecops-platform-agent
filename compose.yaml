@@ -1,0 +1,20 @@
+services:
+  advisor:
+    build: .
+    image: devsecops-advisor:local
+    user: "10001:10001"
+    init: true
+    ports:
+      - "127.0.0.1:7860:7860"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+    volumes:
+      - model-cache:/home/advisor/.cache
+
+volumes:
+  model-cache:

@@ -1,0 +1,54 @@
+{
+  "Findings": [
+    {
+      "ProductArn": "arn:aws:securityhub:eu-north-1:123456789012:product/aws/securityhub",
+      "AwsAccountId": "123456789012",
+      "Region": "eu-north-1",
+      "RecordState": "ACTIVE",
+      "Severity": {
+        "Label": "HIGH"
+      },
+      "Resources": [
+        {
+          "Type": "AwsEc2SecurityGroup",
+          "Id": "sg-example",
+          "Region": "eu-north-1"
+        }
+      ],
+      "UpdatedAt": "2026-10-28T12:00:00Z",
+      "Id": "example-failed",
+      "Title": "Security group allows SSH from 0.0.0.0/0",
+      "Compliance": {
+        "Status": "FAILED"
+      },
+      "Workflow": {
+        "Status": "NEW"
+      }
+    },
+    {
+      "ProductArn": "arn:aws:securityhub:eu-north-1:123456789012:product/aws/securityhub",
+      "AwsAccountId": "123456789012",
+      "Region": "eu-north-1",
+      "RecordState": "ACTIVE",
+      "Severity": {
+        "Label": "HIGH"
+      },
+      "Resources": [
+        {
+          "Type": "AwsEc2SecurityGroup",
+          "Id": "sg-example",
+          "Region": "eu-north-1"
+        }
+      ],
+      "UpdatedAt": "2026-10-28T12:00:00Z",
+      "Id": "example-passed",
+      "Title": "Security group restricts SSH ingress",
+      "Compliance": {
+        "Status": "PASSED"
+      },
+      "Workflow": {
+        "Status": "RESOLVED"
+      }
+    }
+  ]
+}
