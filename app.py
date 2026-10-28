@@ -104,12 +104,6 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         memory_context = memory.get_context(session_id)
         related_context = memory.get_related_history(session_id, finding)
 
-    combined_context = rag_context
-    if memory_context:
-        combined_context = f"{memory_context}\n\n{rag_context}"
-    if related_context:
-        combined_context = f"{related_context}\n\n{combined_context}"
-
     recommendation = REMEDIATIONS.get(
         classification["category"],
         "Review the finding and apply standard security hardening practices.",
@@ -163,6 +157,9 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
 
     if memory_context:
         recommendation += f"\n\nSession context:\n{memory_context}"
+
+    if related_context:
+        recommendation += f"\n\n{related_context}"
 
     with PerformanceTimer("output_filter", trace_id):
         filtered = filter_output(

@@ -334,3 +334,34 @@ def test_security_hub_validation_failure_is_counted_with_source_identity(tmp_pat
     result = app.analyze_uploaded_findings("security_hub", str(upload))
     assert result["import_summary"]["assessment_error_count"] == 1
     assert result["assessment_errors"][0]["finding_id"] == "example-failed"
+
+
+def test_related_session_history_reaches_filtered_recommendation(monkeypatch):
+    first = _call("review_finding", [SSH_FINDING], "browser-related")
+    original_filter = app.filter_output
+    filtered_inputs = []
+
+    def capture_filter(response, **kwargs):
+        filtered_inputs.append(response)
+        return original_filter(response, **kwargs)
+
+    monkeypatch.setattr(app, "filter_output", capture_filter)
+    second = _call("review_finding", [SSH_FINDING], "browser-related")
+
+    assert second["session_id"] == first["session_id"]
+    related = "Related findings from this session:"
+    assert related not in first["recommendation"]
+    assert related in second["recommendation"]
+    assert SSH_FINDING in second["recommendation"].split(related, 1)[1]
+    assert related in filtered_inputs[0]
+    assert "Knowledge base guidance:" in second["recommendation"]
+    assert "Session context:" in second["recommendation"]
+    assert second["recommendation"].count(related) == 1
+
+
+def test_related_session_history_does_not_cross_browser_owners():
+    _call("review_finding", [SSH_FINDING], "browser-related-owner")
+    other = _call("review_finding", [SSH_FINDING], "browser-other-owner")
+
+    assert "Related findings from this session:" not in other["recommendation"]
+    assert "Session context:" not in other["recommendation"]
