@@ -7,7 +7,7 @@ from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_sev
 from src.controls import resolve_control
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
-from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload
+from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_security_hub_import
 from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
 from src.memory import ConversationMemory
 from src.sessions import SessionRegistry
@@ -104,12 +104,6 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         memory_context = memory.get_context(session_id)
         related_context = memory.get_related_history(session_id, finding)
 
-    combined_context = rag_context
-    if memory_context:
-        combined_context = f"{memory_context}\n\n{rag_context}"
-    if related_context:
-        combined_context = f"{related_context}\n\n{combined_context}"
-
     recommendation = REMEDIATIONS.get(
         classification["category"],
         "Review the finding and apply standard security hardening practices.",
@@ -163,6 +157,9 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
 
     if memory_context:
         recommendation += f"\n\nSession context:\n{memory_context}"
+
+    if related_context:
+        recommendation += f"\n\n{related_context}"
 
     with PerformanceTimer("output_filter", trace_id):
         filtered = filter_output(
@@ -243,7 +240,10 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
 
 def analyze_ingested_findings(source, payload, session_id=None, owner=None):
     """Analyze exported scanner findings while retaining manual analysis compatibility."""
-    records = normalize_payload(source, payload)
+    return _analyze_import_records(normalize_payload(source, payload), session_id, owner)
+
+
+def _analyze_import_records(records, session_id=None, owner=None):
     if not records:
         return []
 
@@ -259,14 +259,37 @@ def analyze_ingested_findings(source, payload, session_id=None, owner=None):
     ]
 
 
-def analyze_uploaded_findings(source, upload, session_id=None, request=None):
+def preview_uploaded_findings(source, upload):
+    """Preview Security Hub scope without running classification or creating sessions."""
+    try:
+        payload = load_json_upload(upload)
+        if source == "security_hub":
+            return prepare_security_hub_import(payload)["summary"]
+        return {"source": source, "finding_count": len(normalize_payload(source, payload))}
+    except FindingIngestionError as exc:
+        return {"error": str(exc)}
+
+
+def analyze_uploaded_findings(source, upload, session_id=None, request: gr.Request = None):
     """UI-safe JSON upload entry point; manual text analysis remains available."""
     try:
         payload = load_json_upload(upload)
-        results = analyze_ingested_findings(
-            source, payload, session_id, owner=_request_owner(request)
-        )
-        return {"source": source, "finding_count": len(results), "results": results}
+        batch = prepare_security_hub_import(payload) if source == "security_hub" else None
+        records = batch["records"] if batch else normalize_payload(source, payload)
+        results = _analyze_import_records(records, session_id, owner=_request_owner(request))
+        response = {"source": source, "finding_count": len(results), "results": results}
+        if batch:
+            summary = batch["summary"]
+            summary["assessment_success_count"] = sum("error" not in item for item in results)
+            summary["assessment_error_count"] = sum("error" in item for item in results)
+            response["import_summary"] = summary
+            response["excluded_findings"] = batch["excluded_findings"]
+            # Keep source identity even when the assessment validator rejects a row.
+            response["assessment_errors"] = [
+                {"finding_id": metadata.get("finding_id"), "error": result["error"]}
+                for (_, metadata), result in zip(records, results) if "error" in result
+            ]
+        return response
     except FindingIngestionError as exc:
         return {"error": str(exc)}
 
@@ -407,6 +430,14 @@ with gr.Blocks(
                 finding_upload = gr.File(
                     file_types=[".json"], type="filepath", label="JSON export (max 1 MB)"
                 )
+                gr.Markdown(
+                    "For AWS Security Hub, upload the JSON output of `aws securityhub get-findings`. "
+                    "Preview scope first. Only actionable findings are sent for advisory assessment; "
+                    "passed, resolved, suppressed, archived, and unknown checks stay in the import report. "
+                    "Limits: 1 MB and 500 Security Hub records."
+                )
+                preview_upload_btn = gr.Button("Preview import scope")
+                import_summary = gr.JSON(label="Import scope and validation")
                 upload_btn = gr.Button("Analyze uploaded findings")
 
             with gr.Row():
@@ -473,6 +504,11 @@ with gr.Blocks(
         fn=review_finding_with_cot,
         inputs=[finding_input],
         outputs=[output_json],
+    )
+    preview_upload_btn.click(
+        fn=preview_uploaded_findings,
+        inputs=[upload_source, finding_upload],
+        outputs=[import_summary],
     )
     upload_btn.click(
         fn=analyze_uploaded_findings,

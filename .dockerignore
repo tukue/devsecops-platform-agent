@@ -1,0 +1,10 @@
+# Only application runtime inputs may enter the build context.
+**
+!requirements.txt
+!app.py
+!src/
+!src/**
+!data/
+!data/**
+**/__pycache__/
+**/*.pyc

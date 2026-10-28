@@ -42,7 +42,7 @@ tags:
 | **Clean, modular codebase** with separation of concerns | [Repository Structure](#repository-structure) |
 | **Comprehensive test suite** (110 tests) covering all modules | [tests/](tests/) |
 | **Observability built-in**: structured logging, in-app metrics, health checks | [Observability](#observability-and-monitoring-architecture) |
-| **Live deployment** on HF Spaces; Docker and multi-cloud configs are planned | [Roadmap](#roadmap) |
+| **Live deployment** on HF Spaces and local Docker support; multi-cloud deployment configs are planned | [Roadmap](#roadmap) |
 
 **Quick talking points for interviews:**
 - Built a security advisor with hybrid classification: rule-based for known patterns + ensemble zero-shot for novel findings
@@ -686,6 +686,38 @@ python app.py
 
 Open the local Gradio address shown in the terminal, normally `http://127.0.0.1:7860`.
 
+### Run in Docker as a non-root user
+
+```bash
+docker compose up --build
+```
+
+Open `http://127.0.0.1:7860`. The image and Compose service run as UID/GID
+`10001:10001`. Compose drops Linux capabilities, prevents privilege escalation,
+and uses a read-only root filesystem. Temporary uploads use `/tmp`; model caches
+use a writable named volume. AWS credentials and local exports are excluded from
+the build context and do not need to be mounted.
+
+The first build downloads Python dependencies and CPU-only PyTorch; model
+fallback may download large model weights on first use. Dependencies currently
+follow `requirements.txt` and are not locked to exact versions.
+
+Verify the runtime identity with `docker compose exec advisor id`. Stop with
+`docker compose down`; the model cache remains for the next run.
+
+### Import AWS Security Hub findings
+
+Open **Upload scanner export (JSON)**, select **security_hub**, and upload the
+JSON output of `aws securityhub get-findings`. Use **Preview import scope** to
+review accounts, regions, finding states, and rejected rows before analysis.
+AWS evidence and native severity are retained separately from advisor results.
+No cloud credentials are required by the app.
+
+Try the sanitized [sample export](tests/fixtures/security_hub_export.json), then
+follow the [AWS import guide](docs/AWS_SECURITY_HUB_IMPORT.md) for export commands,
+status handling, limits, and coverage caveats. Limits are 1 MB and 500 source
+records; existing per-finding validation and rate limits still apply.
+
 ### Run Tests
 
 ```bash
@@ -718,7 +750,7 @@ python -m pytest tests/ -v
 
 ## Roadmap
 
-- Package the app as a Docker image with a compose file for local deployment.
+- Lock container dependencies and add automated image vulnerability scanning.
 - Export metrics in Prometheus format and ship Grafana dashboards.
 - Multi-cloud deployment templates (AWS, GCP, Azure) beyond the current HF Spaces deployment.
 - Add policy-as-code and approved organizational standards as grounded context.
