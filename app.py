@@ -7,7 +7,7 @@ from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_sev
 from src.controls import resolve_control
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
-from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_security_hub_import
+from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_checkov_import, prepare_security_hub_import
 from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
 from src.memory import ConversationMemory
 from src.sessions import SessionRegistry
@@ -260,11 +260,13 @@ def _analyze_import_records(records, session_id=None, owner=None):
 
 
 def preview_uploaded_findings(source, upload):
-    """Preview Security Hub scope without running classification or creating sessions."""
+    """Preview scanner import scope without classifying or creating sessions."""
     try:
         payload = load_json_upload(upload)
         if source == "security_hub":
             return prepare_security_hub_import(payload)["summary"]
+        if source == "checkov":
+            return prepare_checkov_import(payload)["summary"]
         return {"source": source, "finding_count": len(normalize_payload(source, payload))}
     except FindingIngestionError as exc:
         return {"error": str(exc)}
@@ -274,7 +276,11 @@ def analyze_uploaded_findings(source, upload, session_id=None, request: gr.Reque
     """UI-safe JSON upload entry point; manual text analysis remains available."""
     try:
         payload = load_json_upload(upload)
-        batch = prepare_security_hub_import(payload) if source == "security_hub" else None
+        batch = (
+            prepare_security_hub_import(payload) if source == "security_hub"
+            else prepare_checkov_import(payload) if source == "checkov"
+            else None
+        )
         records = batch["records"] if batch else normalize_payload(source, payload)
         results = _analyze_import_records(records, session_id, owner=_request_owner(request))
         response = {"source": source, "finding_count": len(results), "results": results}
@@ -283,10 +289,11 @@ def analyze_uploaded_findings(source, upload, session_id=None, request: gr.Reque
             summary["assessment_success_count"] = sum("error" not in item for item in results)
             summary["assessment_error_count"] = sum("error" in item for item in results)
             response["import_summary"] = summary
-            response["excluded_findings"] = batch["excluded_findings"]
+            if "excluded_findings" in batch:
+                response["excluded_findings"] = batch["excluded_findings"]
             # Keep source identity even when the assessment validator rejects a row.
             response["assessment_errors"] = [
-                {"finding_id": metadata.get("finding_id"), "error": result["error"]}
+                {"finding_id": metadata.get("finding_id"), "rule_id": metadata.get("rule_id"), "error": result["error"]}
                 for (_, metadata), result in zip(records, results) if "error" in result
             ]
         return response
@@ -431,10 +438,12 @@ with gr.Blocks(
                     file_types=[".json"], type="filepath", label="JSON export (max 1 MB)"
                 )
                 gr.Markdown(
+                    "For Checkov, upload `checkov -d . --output json` output; failed checks are assessed, "
+                    "while passed and skipped checks are counted only. For Trivy, upload its JSON output. "
                     "For AWS Security Hub, upload the JSON output of `aws securityhub get-findings`. "
                     "Preview scope first. Only actionable findings are sent for advisory assessment; "
                     "passed, resolved, suppressed, archived, and unknown checks stay in the import report. "
-                    "Limits: 1 MB and 500 Security Hub records."
+                    "Limits: 1 MB and 500 checks/findings per export."
                 )
                 preview_upload_btn = gr.Button("Preview import scope")
                 import_summary = gr.JSON(label="Import scope and validation")

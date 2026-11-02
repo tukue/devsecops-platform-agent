@@ -718,6 +718,23 @@ follow the [AWS import guide](docs/AWS_SECURITY_HUB_IMPORT.md) for export comman
 status handling, limits, and coverage caveats. Limits are 1 MB and 500 source
 records; existing per-finding validation and rate limits still apply.
 
+### Import Checkov Terraform findings
+
+Generate Checkov's JSON output from an IaC directory with:
+
+```bash
+checkov -d path/to/terraform --output json > checkov-results.json
+```
+
+In the app, select **checkov**, upload the export, and preview it before analysis.
+Failed checks are assessed; passed and skipped checks are reported as counts and
+are not sent to the classifier. The import validates the Checkov result shape,
+deduplicates repeated check/resource/location entries, and attaches rule ID and
+file/line reference to failed findings. Uploads are limited to 1 MB and 500
+checks. Try the sanitized [Terraform example](tests/fixtures/checkov_terraform_export.json).
+Review exports for sensitive paths or descriptions before uploading; the advisor
+does not apply Terraform changes.
+
 ### Run Tests
 
 ```bash

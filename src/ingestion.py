@@ -17,25 +17,73 @@ def _text(*values):
     return " ".join(str(value) for value in values if value).strip()
 
 
+MAX_CHECKOV_CHECKS = 500
+
+
+def prepare_checkov_import(payload):
+    """Validate Checkov JSON and separate failed checks from pass/skip evidence."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), dict):
+        raise FindingIngestionError("Expected a Checkov JSON object with a results object.")
+    results = payload["results"]
+    keys = ("failed_checks", "passed_checks", "skipped_checks")
+    if any(key in results and not isinstance(results[key], list) for key in keys):
+        raise FindingIngestionError("Checkov result collections must be arrays.")
+    collections = {key: results.get(key, []) for key in keys}
+    total = sum(len(rows) for rows in collections.values())
+    if total > MAX_CHECKOV_CHECKS:
+        raise FindingIngestionError("Export exceeds the 500-check import limit; split the export into batches.")
+
+    summary = {
+        "total_checks": total, "failed_count": 0, "passed_count": 0,
+        "skipped_count": 0, "invalid_count": 0, "duplicate_count": 0,
+        "actionable_count": 0, "rejected_records": [],
+        "coverage": "Only checks represented in this Checkov export were assessed.",
+    }
+    records, seen = [], set()
+    for collection, disposition in (("failed_checks", "failed"), ("passed_checks", "passed"), ("skipped_checks", "skipped")):
+        for index, check in enumerate(collections[collection]):
+            try:
+                if not isinstance(check, dict):
+                    raise ValueError("Check must be an object.")
+                for key in ("check_id", "check_name", "resource", "check_type", "file_path", "guideline"):
+                    if key in check and not isinstance(check[key], str):
+                        raise ValueError("%s must be text." % key)
+                check_id, resource = check.get("check_id", "").strip(), check.get("resource", "").strip()
+                name = check.get("check_name", "").strip()
+                if not check_id or not (name or resource):
+                    raise ValueError("Check needs a rule ID and a name or resource.")
+            except ValueError as exc:
+                summary["invalid_count"] += 1
+                summary["rejected_records"].append({"collection": collection, "index": index, "error": str(exc)})
+                continue
+            summary[disposition + "_count"] += 1
+            identity = (check_id, resource, check.get("file_path", ""))
+            if identity in seen:
+                summary["duplicate_count"] += 1
+                summary[disposition + "_count"] -= 1
+                continue
+            seen.add(identity)
+            if disposition != "failed":
+                continue
+            finding = _text(name, resource, check.get("guideline"))
+            source_reference = check.get("file_path", "")
+            if check.get("file_line_range") is not None:
+                line_range = check["file_line_range"]
+                if isinstance(line_range, list) and len(line_range) == 2 and all(type(line) is int and line > 0 for line in line_range):
+                    source_reference += ":%s-%s" % tuple(line_range)
+            records.append((finding, {
+                "provider": "aws" if resource.lower().startswith("aws_") else "generic",
+                "source_type": "scanner", "scanner": "Checkov", "rule_id": check_id,
+                "resource_type": check.get("check_type"), "resource_id": resource,
+                "source_references": [source_reference] if source_reference else [],
+                "evidence": [finding],
+            }))
+    summary["actionable_count"] = len(records)
+    return {"records": records, "summary": summary}
+
+
 def _checkov(payload):
-    checks = payload.get("results", {}).get("failed_checks", [])
-    records = []
-    for check in checks:
-        finding = _text(check.get("check_name"), check.get("resource"), check.get("guideline"))
-        if not finding:
-            continue
-        resource = str(check.get("resource", ""))
-        records.append((finding, {
-            "provider": "aws" if resource.lower().startswith("aws_") else "generic",
-            "source_type": "scanner",
-            "scanner": "Checkov",
-            "rule_id": check.get("check_id"),
-            "resource_type": check.get("check_type"),
-            "resource_id": resource,
-            "source_references": [check.get("file_path", "")],
-            "evidence": [finding],
-        }))
-    return records
+    return prepare_checkov_import(payload)["records"]
 
 
 def _trivy(payload):
