@@ -1,0 +1,26 @@
+{
+  "results": {
+    "failed_checks": [
+      {
+        "check_id": "CKV_AWS_24",
+        "check_name": "Ensure no security group allows ingress from 0.0.0.0/0 to port 22",
+        "check_type": "resource",
+        "resource": "aws_security_group.example",
+        "file_path": "main.tf",
+        "file_line_range": [12, 24],
+        "guideline": "Restrict SSH ingress to approved source ranges."
+      }
+    ],
+    "passed_checks": [
+      {
+        "check_id": "CKV_AWS_23",
+        "check_name": "Ensure no security group allows ingress from 0.0.0.0/0 to port 80",
+        "check_type": "resource",
+        "resource": "aws_security_group.example",
+        "file_path": "main.tf",
+        "file_line_range": [12, 24]
+      }
+    ],
+    "skipped_checks": []
+  }
+}
