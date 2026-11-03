@@ -274,7 +274,7 @@ def load_json_upload(file_path):
         raise FindingIngestionError("Upload a JSON finding export.")
 
     temp_root = os.path.realpath(tempfile.gettempdir())
-    candidate = os.path.abspath(os.path.normpath(file_path))
+    candidate = os.path.realpath(os.path.normpath(file_path))
     try:
         if os.path.commonpath((temp_root, candidate)) != temp_root:
             raise FindingIngestionError("Invalid upload path.")
