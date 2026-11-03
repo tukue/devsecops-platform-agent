@@ -398,7 +398,7 @@ def reset_observability_metrics():
 
 TEST_FINDINGS = [
     ("An IAM role grants wildcard permissions to all AWS resources.", "IAM"),
-    ("The production security group allows SSH from 0.0.0.0/0.", "Network"),
+    ("The production security group exposes SSH to untrusted networks.", "Network"),
     ("The Kubernetes workload runs as root in a privileged container.", "Container"),
     ("A database password is hardcoded in the Git repository.", "Secrets"),
     ("The storage bucket contains customer records with no encryption.", "Data"),

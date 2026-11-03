@@ -655,7 +655,7 @@ High- and critical-severity results, and results below the confidence threshold,
 
 ## Example Workflow
 
-1. An engineer submits: “The production security group allows SSH from `0.0.0.0/0`.”
+1. An engineer submits: “The production security group exposes SSH to untrusted networks.”
 2. The advisor categorizes the issue as **Network**, marks it **critical**, assigns it to **Cloud Platform**, and recommends restricting ingress to approved, trusted access paths.
 3. The assigned team validates the exposure, remediates through infrastructure-as-code, and runs the normal deployment and verification process.
 4. The result is recorded in the ticket or change record, including the decision and evidence of remediation.
