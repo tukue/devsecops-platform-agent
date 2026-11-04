@@ -33,6 +33,23 @@ def test_skipped_model_case_is_counted_as_uncovered():
     assert report["metrics"]["evaluation_coverage"] >= report["thresholds"]["minimum_evaluation_coverage"]
     skipped = next(case for case in report["cases"] if case["id"] == "CLS-MODEL-ONLY")
     assert skipped["error"] == "Benchmark case has no deterministic rule match."
+    assert report["checks"]["evaluation_coverage"] is True
+    assert report["passed"] is True
+
+
+def test_excessive_skipped_model_cases_fail_coverage_gate():
+    benchmark = load_benchmark()
+    benchmark["classification_benchmarks"].extend(
+        {"id": f"CLS-MODEL-ONLY-{index}",
+         "finding": "An unusual platform condition needs expert review."}
+        for index in range(3)
+    )
+
+    report = evaluate(benchmark)
+
+    assert report["metrics"]["evaluation_coverage"] == 23 / 26
+    assert report["checks"]["evaluation_coverage"] is False
+    assert report["passed"] is False
 
 
 def test_disabling_zero_tolerance_fails_closed():
