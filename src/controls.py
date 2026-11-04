@@ -79,18 +79,18 @@ CONTROL_TAXONOMY = (
         "validation": "Confirm public access is removed and approved consumers retain only required access.",
     },
     {
-        "id": "data.encryption-at-rest",
-        "category": "Data",
-        "owner": "Data Platform",
-        "signals": ("unencrypted", "no encryption", "encryption", "database", "rds"),
-        "validation": "Confirm encryption at rest is enabled and the approved key-management policy is applied.",
-    },
-    {
         "id": "data.encryption-in-transit",
         "category": "Data",
         "owner": "Data Platform",
         "signals": ("http instead of https", "unencrypted channel", "tls", "https", "encryption in transit"),
         "validation": "Verify TLS negotiation, certificate validity, and service health over the encrypted path.",
+    },
+    {
+        "id": "data.encryption-at-rest",
+        "category": "Data",
+        "owner": "Data Platform",
+        "signals": ("unencrypted", "no encryption", "encryption", "database", "rds"),
+        "validation": "Confirm encryption at rest is enabled and the approved key-management policy is applied.",
     },
     {
         "id": "data.backup-protection",

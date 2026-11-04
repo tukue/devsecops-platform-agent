@@ -36,3 +36,14 @@ jobs:
 
       - name: Run test suite
         run: python -m pytest -q
+
+      - name: Run deterministic AI evaluation
+        run: python scripts/evaluate_agent.py --output agent-evaluation-report.json
+
+      - name: Upload AI evaluation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-evaluation-report
+          path: agent-evaluation-report.json
+          if-no-files-found: ignore

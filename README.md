@@ -742,6 +742,18 @@ pip install pytest
 python -m pytest tests/ -v
 ```
 
+### Evaluate AI behavior
+
+Run the offline, deterministic benchmark and write a JSON report:
+
+```bash
+python scripts/evaluate_agent.py --output agent-evaluation-report.json
+```
+
+CI runs this evaluation on pull requests and uploads its report. See the
+[evaluation guide](docs/AI_EVALUATION.md) for metrics, thresholds, and model
+evaluation scope.
+
 ## Repository Structure
 
 ```text
