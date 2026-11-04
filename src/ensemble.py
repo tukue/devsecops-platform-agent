@@ -37,7 +37,7 @@ CATEGORY_RULES = [
         "helm", "docker", "pod", "deployment", "workload",
     ]),
     ("Secrets", [
-        "secret committed", "private key", "hardcoded password",
+        "secret committed", "private key", "hardcoded password", "password is hardcoded",
         "hardcoded secret", "credential", "api key", "token exposed",
     ]),
     ("Data", [
@@ -50,7 +50,7 @@ SEVERITY_RULES = [
     ("critical", [
         "publicly accessible", "0.0.0.0/0", "action: *", "resource: *",
         "admin access", "root user", "secret committed", "private key committed",
-        "cluster-admin", "hardcoded password",
+        "cluster-admin", "hardcoded password", "password is hardcoded",
     ]),
     ("high", [
         "privileged container", "runs as root", "unencrypted", "no encryption",

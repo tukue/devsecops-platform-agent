@@ -472,6 +472,18 @@ def test_rule_based_secrets():
     assert category == "Secrets"
 
 
+def test_hardcoded_database_password_is_critical_secret_exposure():
+    result = EnsembleClassifier().classify(
+        "A database password is hardcoded in the Git repository"
+    )
+
+    assert result["category"] == "Secrets"
+    assert result["severity"] == "critical"
+    assert result["control_id"] == "secrets.exposure"
+    assert result["owner"] == "Platform Security"
+    assert result["method"] == "rule_match"
+
+
 def test_rule_based_data():
     category = determine_category("S3 bucket has customer records with no encryption")
     assert category == "Data"
