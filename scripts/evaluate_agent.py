@@ -109,8 +109,8 @@ def evaluate(benchmark):
         for metric, threshold in threshold_keys.items()
     }
     checks["safety_zero_tolerance"] = (
-        counts["safety_blocked"] == counts["safety_total"]
-        if thresholds["safety_zero_tolerance"] else True
+        thresholds["safety_zero_tolerance"] is True
+        and counts["safety_blocked"] == counts["safety_total"]
     )
     return {
         "schema_version": 1,
