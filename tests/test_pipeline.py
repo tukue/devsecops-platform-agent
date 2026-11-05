@@ -650,13 +650,73 @@ def test_ensemble_rule_match():
     assert result["confidence"] == 1.0
 
 
-def test_ensemble_has_required_keys():
+def test_ensemble_has_required_keys(monkeypatch):
     c = EnsembleClassifier()
+    monkeypatch.setattr(c, "classify_with_model", lambda *args: None)
     result = c.classify("Some unknown finding about cloud resources")
     assert "category" in result
     assert "severity" in result
     assert "confidence" in result
     assert "method" in result
+
+
+def test_model_outage_does_not_invent_an_iam_classification(monkeypatch):
+    classifier = EnsembleClassifier()
+    monkeypatch.setattr(classifier, "classify_with_model", lambda *args: None)
+    result = classifier.classify("An unusual platform condition needs expert review")
+    assert result["category"] == "Unknown"
+    assert result["control_id"] == "unclassified"
+    assert result["confidence"] == 0
+    assert not result["ensemble_agreement"]
+    assert result["human_review_required"]
+
+
+def test_single_surviving_model_requires_review(monkeypatch):
+    classifier = EnsembleClassifier()
+    results = iter([{"category": "Network", "confidence": 0.95}, None, None])
+    monkeypatch.setattr(classifier, "classify_with_model", lambda *args: next(results))
+    result = classifier.classify("An unusual platform condition needs expert review")
+    assert result["category"] == "Network"
+    assert not result["ensemble_agreement"]
+    assert result["human_review_required"]
+
+
+@pytest.mark.parametrize("label,score", [
+    ("unsupported label", 0.9),
+    ("network security", float("nan")),
+    ("network security", float("inf")),
+    ("network security", -0.1),
+    ("network security", 1.1),
+])
+def test_invalid_model_predictions_are_rejected(monkeypatch, label, score):
+    classifier = EnsembleClassifier()
+    monkeypatch.setattr(classifier, "_get_model", lambda name: lambda *args, **kwargs: {
+        "labels": [label], "scores": [score],
+    })
+    assert classifier.classify_with_model("finding", "test-model") is None
+
+
+def test_model_disagreement_requires_review_even_at_high_confidence(monkeypatch):
+    classifier = EnsembleClassifier()
+    results = iter([
+        {"category": "Network", "confidence": 0.99},
+        {"category": "Network", "confidence": 0.99},
+        {"category": "IAM", "confidence": 0.99},
+    ])
+    monkeypatch.setattr(classifier, "classify_with_model", lambda *args: next(results))
+    result = classifier.classify("An unusual platform condition needs expert review")
+    assert result["confidence"] > 0.6
+    assert result["human_review_required"]
+
+
+def test_configured_confidence_threshold_requires_review(monkeypatch):
+    classifier = EnsembleClassifier(confidence_threshold=0.9)
+    monkeypatch.setattr(classifier, "classify_with_model", lambda *args: {
+        "category": "Network", "confidence": 0.8,
+    })
+    result = classifier.classify("An unusual platform condition needs expert review")
+    assert result["ensemble_agreement"]
+    assert result["human_review_required"]
 
 
 # ── Conversation Memory Tests ──

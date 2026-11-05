@@ -1,6 +1,7 @@
 from transformers import pipeline
 import logging
 import threading
+import math
 from src.controls import resolve_control
 
 logger = logging.getLogger(__name__)
@@ -129,8 +130,11 @@ class EnsembleClassifier:
             result = classifier(finding, CATEGORIES, multi_label=False)
             label = result["labels"][0]
             score = float(result["scores"][0])
+            if label not in CATEGORY_MAP or not math.isfinite(score) or not 0 <= score <= 1:
+                logger.warning("Model %s returned an invalid classification", model_name)
+                return None
             return {
-                "category": CATEGORY_MAP.get(label, "IAM"),
+                "category": CATEGORY_MAP[label],
                 "raw_label": label,
                 "confidence": score,
             }
@@ -166,7 +170,7 @@ class EnsembleClassifier:
 
         if not model_results:
             return {
-                "category": "IAM",
+                "category": "Unknown",
                 "confidence": 0.0,
                 "method": "fallback",
                 "model_results": [],
@@ -204,11 +208,15 @@ class EnsembleClassifier:
                 "method": "rule_match",
                 "model_results": [],
                 "ensemble_agreement": True,
+                "human_review_required": severity in {"high", "critical"},
             }
 
         ensemble = self.ensemble_classify(finding)
 
-        agreement = len(set(r["category"] for r in ensemble["model_results"])) == 1
+        agreement = (
+            len(ensemble["model_results"]) == len(MODELS)
+            and len(set(r["category"] for r in ensemble["model_results"])) == 1
+        )
 
         control = resolve_control(finding, ensemble["category"])
         return {
@@ -221,5 +229,10 @@ class EnsembleClassifier:
             "method": ensemble["method"],
             "model_results": ensemble["model_results"],
             "ensemble_agreement": agreement,
+            "human_review_required": (
+                severity in {"high", "critical"}
+                or ensemble["confidence"] < max(self.confidence_threshold, 0.60)
+                or not agreement
+            ),
             "confidence_gap": ensemble.get("confidence_gap", 0),
         }

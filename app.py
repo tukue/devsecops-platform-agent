@@ -207,7 +207,11 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "rollback_guidance": rollback_guidance,
         "citations": citations,
         "finding": canonical_finding.to_dict(),
-        "human_review_required": classification["severity"] in {"high", "critical"} or classification["confidence"] < 0.60,
+        "human_review_required": (
+            classification.get("human_review_required", False)
+            or classification["severity"] in {"high", "critical"}
+            or classification["confidence"] < 0.60
+        ),
         "automation_allowed": False,
         "rag_sources": rag_sources,
         "session_id": session_id,
