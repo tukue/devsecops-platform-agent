@@ -192,6 +192,10 @@ class ProviderRouter:
         self.adapters.append(GenericProviderAdapter())
 
     def select(self, finding, metadata=None):
+        metadata = metadata or {}
+        declared_provider = metadata.get("provider")
+        if declared_provider and declared_provider not in {"aws", "azure", "gcp", "generic"}:
+            return next(adapter for adapter in self.adapters if adapter.provider == "generic")
         best = None
         for adapter in self.adapters:
             if adapter.provider == "generic":

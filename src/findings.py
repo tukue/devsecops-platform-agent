@@ -17,6 +17,7 @@ class CanonicalFinding:
     severity: str
     owner: str
     confidence: float
+    validation_step: str
     evidence: tuple[str, ...] = field(default_factory=tuple)
     finding_id: str | None = None
     product_arn: str | None = None
@@ -43,8 +44,8 @@ class CanonicalFinding:
 
 
 def infer_provider(finding, provider=None):
-    if provider in VALID_PROVIDERS:
-        return provider
+    if provider is not None:
+        return provider if provider in VALID_PROVIDERS else "generic"
     return "aws" if is_aws_finding(finding) else "generic"
 
 
@@ -74,6 +75,14 @@ def canonicalize_finding(finding: str, classification: dict[str, Any], control: 
         severity=classification["severity"],
         owner=control["owner"] if control else "Platform Security",
         confidence=float(classification["confidence"]),
+        validation_step=(
+            control.get("validation")
+            if control
+            else classification.get(
+                "validation_step",
+                "Have a security engineer validate the finding and remediation.",
+            )
+        ),
         evidence=tuple(evidence),
         finding_id=metadata.get("finding_id"),
         product_arn=metadata.get("product_arn"),

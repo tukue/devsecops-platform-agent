@@ -536,6 +536,13 @@ def test_provider_router_uses_generic_for_unsupported_provider():
     assert adapter.normalize("finding", {"provider": "azure"})["provider"] == "azure"
 
 
+def test_unknown_declared_provider_does_not_fall_back_to_aws():
+    router = ProviderRouter()
+    adapter = router.select("AWS IAM role has wildcard permissions", {"provider": "oracle"})
+    assert isinstance(adapter, GenericProviderAdapter)
+    assert infer_provider("AWS IAM role has wildcard permissions", "oracle") == "generic"
+
+
 def test_aws_regression_fixtures_preserve_classification_contract():
     fixture_path = os.path.join(
         os.path.dirname(__file__), "fixtures", "aws_regression_findings.json"
@@ -558,6 +565,11 @@ def test_aws_regression_fixtures_preserve_classification_contract():
         assert classification["severity"] == expected["severity"]
         assert classification["owner"] == expected["owner"]
         assert canonical["provider"] == expected["provider"]
+        assert canonical["control_id"]
+        assert canonical["evidence"]
+        assert canonical["owner"]
+        assert 0 <= canonical["confidence"] <= 1
+        assert canonical["validation_step"]
         assert classification["validation_step"]
 
 
