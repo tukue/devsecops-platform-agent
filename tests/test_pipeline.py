@@ -509,6 +509,35 @@ def test_canonical_finding_contract_and_provider_inference():
     assert finding["control_id"] == "identity.least-privilege"
     assert finding["account"] == "123456789012"
     assert finding["evidence"]
+    assert finding["schema_version"] == "1.0"
+
+
+def test_canonical_finding_validates_typed_fields_and_redacts_sensitive_text():
+    classification = {"category": "Secrets", "severity": "high", "confidence": 0.8}
+    finding = canonicalize_finding(
+        "A secret was exposed: AKIAIOSFODNN7EXAMPLE",
+        classification,
+        {"id": "secrets.exposure", "owner": "Platform Security"},
+        {
+            "evidence": ["Credential AKIAIOSFODNN7EXAMPLE is in a deployment"],
+            "source_references": ["https://scanner.example/findings/1"],
+            "native_severity": {"note": "token sk-abcdefghijklmnopqrst is exposed"},
+        },
+    ).to_dict()
+
+    assert "AKIAIOSFODNN7EXAMPLE" not in str(finding)
+    assert "[REDACTED:AWS_KEY]" in finding["native_finding"]
+    assert "sk-abcdefghijklmnopqrst" not in str(finding)
+
+    with pytest.raises(ValueError, match="confidence"):
+        canonicalize_finding("An IAM role allows wildcard permissions", {
+            "category": "IAM", "severity": "high", "confidence": 1.2,
+        }, None)
+
+    with pytest.raises(ValueError, match="source_references"):
+        canonicalize_finding("An IAM role allows wildcard permissions", classification, None, {
+            "source_references": [42],
+        })
 
 
 def test_unknown_provider_remains_generic():
