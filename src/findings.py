@@ -106,8 +106,8 @@ def _redact_json(value: Any) -> Any:
 
 
 def _resources(value: Any) -> tuple[dict, ...]:
-    if not isinstance(value, list):
-        raise ValueError("resources must be a list of dictionaries.")
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("resources must be a sequence of dictionaries.")
     return tuple(_safe_mapping(item, "resource") for item in value)
 
 
@@ -144,9 +144,10 @@ def canonicalize_finding(finding: str, classification: dict[str, Any], control: 
     source_type = _required_text(metadata.get("source_type", "manual"), "source_type")
     evidence = _text_sequence(metadata.get("evidence", (finding,)), "evidence") or (finding,)
     references = _text_sequence(metadata.get("source_references", ()), "source_references")
-    for name in TEXT_METADATA_FIELDS:
-        if name in metadata:
-            _optional_text(metadata[name], name)
+    validated_text_fields = {
+        name: _optional_text(metadata.get(name), name)
+        for name in TEXT_METADATA_FIELDS
+    }
     native_severity = _safe_mapping(metadata.get("native_severity", {}), "native_severity")
     timestamps = _safe_mapping(metadata.get("source_timestamps", {}), "source_timestamps")
     resources = _resources(metadata.get("resources", []))
@@ -162,5 +163,5 @@ def canonicalize_finding(finding: str, classification: dict[str, Any], control: 
         confidence=float(confidence), evidence=evidence,
         native_severity=native_severity, resources=resources,
         source_timestamps=timestamps, source_references=references,
-        **{name: _optional_text(metadata.get(name), name) for name in TEXT_METADATA_FIELDS},
+        **validated_text_fields,
     )

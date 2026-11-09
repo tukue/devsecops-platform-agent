@@ -522,12 +522,15 @@ def test_canonical_finding_validates_typed_fields_and_redacts_sensitive_text():
             "evidence": ["Credential AKIAIOSFODNN7EXAMPLE is in a deployment"],
             "source_references": ["https://scanner.example/findings/1"],
             "native_severity": {"note": "token sk-abcdefghijklmnopqrst is exposed"},
+            "scanner": "scanner sk-abcdefghijklmnopqrst",
+            "resources": ({"Id": "resource-1"},),
         },
     ).to_dict()
 
     assert "AKIAIOSFODNN7EXAMPLE" not in str(finding)
     assert "[REDACTED:AWS_KEY]" in finding["native_finding"]
     assert "sk-abcdefghijklmnopqrst" not in str(finding)
+    assert finding["resources"] == [{"Id": "resource-1"}]
 
     with pytest.raises(ValueError, match="confidence"):
         canonicalize_finding("An IAM role allows wildcard permissions", {
