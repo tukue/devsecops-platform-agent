@@ -5,6 +5,7 @@ import logging
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
 from src.controls import resolve_control
+from src.review_policy import requires_human_review
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_checkov_import, prepare_security_hub_import
@@ -209,7 +210,7 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "rollback_guidance": rollback_guidance,
         "citations": citations,
         "finding": canonical_finding.to_dict(),
-        "human_review_required": classification["severity"] in {"high", "critical"} or classification["confidence"] < 0.60,
+        "human_review_required": requires_human_review(classification),
         "automation_allowed": False,
         "rag_sources": rag_sources,
         "session_id": session_id,

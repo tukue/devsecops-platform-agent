@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from src.ensemble import EnsembleClassifier, determine_category
 from src.input_validation import validate_input
 from src.retriever import SecurityRetriever
+from src.review_policy import requires_human_review
 
 
 BENCHMARK_PATH = ROOT / "data" / "benchmark_sets.json"
@@ -34,10 +35,21 @@ def evaluate(benchmark):
         "safety_total": 0, "evaluated_total": 0, "benchmark_total": 0,
     }
     cases = []
+    critical_total = 0
+    critical_evaluated = 0
+    critical_underestimated = 0
+    review_total = 0
+    review_evaluated = 0
+    review_missing = 0
 
     for row in benchmark["classification_benchmarks"]:
         counts["benchmark_total"] += 1
         finding = row["finding"]
+        expected_critical = row.get("expected_severity") == "critical"
+        expected_review = (row.get("expected_severity") in {"high", "critical"}
+                           or row.get("expected_human_review_required", False))
+        critical_total += expected_critical
+        review_total += expected_review
         # Do not load model weights in CI. Model-fallback cases require a separate,
         # pinned model evaluation job and are deliberately not scored by this gate.
         if determine_category(finding) is None:
@@ -45,6 +57,11 @@ def evaluate(benchmark):
                           "error": "Benchmark case has no deterministic rule match."})
             continue
         result = classifier.classify(finding)
+        actual_review = requires_human_review(result)
+        critical_evaluated += expected_critical
+        critical_underestimated += expected_critical and result["severity"] != "critical"
+        review_evaluated += expected_review
+        review_missing += expected_review and not actual_review
         counts["evaluated_total"] += 1
         counts["classification_total"] += 1
         fields = {
@@ -52,13 +69,25 @@ def evaluate(benchmark):
             "severity": result["severity"] == row["expected_severity"],
             "control": result["control_id"] == row["expected_control"],
             "owner": result["owner"] == row["expected_owner"],
+            "human_review": actual_review == expected_review,
+            "critical_not_underestimated": not expected_critical or result["severity"] == "critical",
         }
         counts["category_correct"] += fields["category"]
         counts["severity_correct"] += fields["severity"]
         counts["control_correct"] += fields["control"]
         counts["owner_correct"] += fields["owner"]
         cases.append({"id": row["id"], "kind": "classification", "passed": all(fields.values()),
-                      "checks": fields, "method": result["method"]})
+                      "checks": fields, "method": result["method"],
+                      "expected": {
+                          "category": row["expected_category"], "severity": row["expected_severity"],
+                          "control": row["expected_control"], "owner": row["expected_owner"],
+                          "human_review_required": expected_review,
+                      },
+                      "actual": {
+                          "category": result["category"], "severity": result["severity"],
+                          "control": result["control_id"], "owner": result["owner"],
+                          "human_review_required": actual_review,
+                      }})
 
     for row in benchmark["retrieval_benchmarks"]:
         counts["benchmark_total"] += 1
@@ -95,6 +124,15 @@ def evaluate(benchmark):
         "safety_block_rate": _accuracy(counts["safety_blocked"], counts["safety_total"]),
         "evaluation_coverage": _accuracy(counts["evaluated_total"], counts["benchmark_total"]),
     }
+    metrics.update({
+        "critical_cases_total": critical_total,
+        "critical_cases_evaluated": critical_evaluated,
+        "critical_underestimation_count": critical_underestimated,
+        "critical_underestimation_rate": _accuracy(critical_underestimated, critical_evaluated),
+        "required_review_cases_total": review_total,
+        "required_review_cases_evaluated": review_evaluated,
+        "missing_required_review_count": review_missing,
+    })
     threshold_keys = {
         "category_accuracy": "category_accuracy",
         "severity_accuracy": "severity_accuracy",
@@ -112,8 +150,17 @@ def evaluate(benchmark):
         thresholds["safety_zero_tolerance"] is True
         and counts["safety_blocked"] == counts["safety_total"]
     )
+    # These safety invariants cannot be weakened by tuning aggregate thresholds.
+    # Require evidence: empty or skipped safety-critical slices cannot pass.
+    checks["critical_underestimation_zero_tolerance"] = (
+        critical_total > 0 and critical_evaluated == critical_total
+        and critical_underestimated == 0
+    )
+    checks["required_human_review"] = (
+        review_total > 0 and review_evaluated == review_total and review_missing == 0
+    )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark_file": "data/benchmark_sets.json",
         "metrics": metrics,
         "thresholds": thresholds,
