@@ -365,3 +365,33 @@ def test_related_session_history_does_not_cross_browser_owners():
 
     assert "Related findings from this session:" not in other["recommendation"]
     assert "Session context:" not in other["recommendation"]
+
+
+@pytest.mark.parametrize("action", ["create_issue", "comment_pr"])
+def test_github_handoff_missing_status_is_audited(monkeypatch, action):
+    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "alice")
+    client = MagicMock()
+    client.create_advisory_issue.return_value = {"url": "https://github.test/1"}
+    client.comment_on_pull_request.return_value = {"url": "https://github.test/1"}
+    monkeypatch.setattr(app, "GitHubWorkflowClient", lambda repo: client)
+    audit = MagicMock()
+    monkeypatch.setattr(app, "audit_handoff", audit)
+    result = app._github_handoff({}, "org/repo", "secret", action, 1)
+    assert result == {"url": "https://github.test/1"}
+    assert audit.call_args.args[-1] == "unknown"
+
+
+def test_github_handoff_logs_unexpected_exception_before_audit(monkeypatch):
+    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "alice")
+    client = MagicMock()
+    client.create_advisory_issue.side_effect = RuntimeError("diagnostic failure")
+    monkeypatch.setattr(app, "GitHubWorkflowClient", lambda repo: client)
+    calls = MagicMock()
+    monkeypatch.setattr(app.logger, "exception", calls.exception)
+    monkeypatch.setattr(app, "audit_handoff", calls.audit)
+    result = app.create_github_issue({}, "org/repo", "secret")
+    assert result["error"] == "GitHub handoff failed."
+    assert "diagnostic failure" not in str(result)
+    assert calls.mock_calls[0][0] == "exception"
+    assert calls.mock_calls[1][0] == "audit"
+    assert calls.audit.call_args.args[-1] == "unexpected_failure"

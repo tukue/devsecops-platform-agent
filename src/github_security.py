@@ -45,7 +45,7 @@ def authorize_handoff(token, repository, action):
                 if expiry.tzinfo is None:
                     raise ValueError()
         except (ValueError, KeyError, TypeError, AttributeError):
-            raise GitHubWorkflowError("Invalid GitHub handoff identity configuration.") from None
+            raise GitHubWorkflowError("Invalid handoff access token.") from None
         digest = hashlib.sha256(presented.encode()).hexdigest()
         matches = [identity for identity in identities if any(
             hmac.compare_digest(digest, item) for item in identity["token_sha256"]

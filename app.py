@@ -1,6 +1,7 @@
 import spaces
 import gradio as gr
 import os
+import logging
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
 from src.controls import resolve_control
@@ -22,6 +23,7 @@ from src.observability import (
 )
 
 setup_logging(level="INFO", json_format=False)
+logger = logging.getLogger("devsecops_advisor.github_handoff")
 
 ANALYZE_BUTTON_CSS = """
 #analyze-button button,
@@ -309,12 +311,13 @@ def _github_handoff(assessment, repository, access_token, action, pull_request=N
         client = GitHubWorkflowClient(repository)
         result = (client.create_advisory_issue(assessment) if action == "create_issue"
                   else client.comment_on_pull_request(pull_request, assessment))
-        audit_handoff(event_id, actor, action, repository, result["status"])
+        audit_handoff(event_id, actor, action, repository, result.get("status", "unknown"))
         return result
     except GitHubWorkflowError as exc:
         audit_handoff(event_id, actor, action, repository, "denied_or_failed")
         return {"error": str(exc)}
     except Exception:
+        logger.exception("Unexpected GitHub handoff failure (event_id=%s)", event_id)
         audit_handoff(event_id, actor, action, repository, "unexpected_failure")
         return {"error": "GitHub handoff failed.", "event_id": event_id}
 

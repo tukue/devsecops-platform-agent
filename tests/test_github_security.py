@@ -39,8 +39,9 @@ def test_rotation_and_revocation(monkeypatch):
 
 @pytest.mark.parametrize("changes", [dict(expires_at="2000-01-01T00:00:00Z"),
     dict(expires_at="2099-01-01"), dict(token_sha256=["invalid"]), dict(actions="create_issue")])
-def test_invalid_or_expired_credentials(monkeypatch, changes):
+def test_invalid_or_expired_personal_credentials_never_fall_back(monkeypatch, changes):
     configure(monkeypatch, **changes)
+    # A matching legacy token must not rescue invalid personal configuration.
     monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "personal-secret")
     with pytest.raises(GitHubWorkflowError):
         authorize_handoff("personal-secret", "org/repo", "create_issue")
@@ -61,3 +62,17 @@ def test_audit_is_structured(caplog):
     assert event["actor"] == "alice"
     assert event["outcome"] == "issue_created"
     assert "token" not in event
+
+
+@pytest.mark.parametrize("raw", ["not-json", "[]", '[{"actor":"alice"}]'])
+def test_malformed_identity_configuration_returns_generic_error(monkeypatch, raw):
+    monkeypatch.setenv("GITHUB_HANDOFF_IDENTITIES", raw)
+    with pytest.raises(GitHubWorkflowError, match=r"^Invalid handoff access token\.$"):
+        authorize_handoff("anything", "org/repo", "create_issue")
+
+
+def test_legacy_token_works_only_without_personal_configuration(monkeypatch):
+    monkeypatch.delenv("GITHUB_HANDOFF_IDENTITIES", raising=False)
+    monkeypatch.delenv("GITHUB_HANDOFF_REQUIRE_IDENTITIES", raising=False)
+    monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "shared")
+    assert authorize_handoff("shared", "org/repo", "create_issue") == "legacy-shared-token"
