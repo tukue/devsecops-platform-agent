@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -10,7 +11,7 @@ from src.github_workflow import GitHubWorkflowError
 
 def configure(monkeypatch, **changes):
     identity = dict(actor="test_user1", token_sha256=[hashlib.sha256(b"personal-secret").hexdigest()],
-                    repositories=["org/repo"], actions=["create_issue"], expires_at="2099-01-01T00:00:00Z")
+                    repositories=["org/repo"], actions=["create_issue"], expires_at=(datetime.now(timezone.utc) + timedelta(hours=12)).isoformat())
     identity.update(changes)
     monkeypatch.setenv("GITHUB_HANDOFF_IDENTITIES", json.dumps([identity]))
     return identity
@@ -38,7 +39,7 @@ def test_rotation_and_revocation(monkeypatch):
 
 
 @pytest.mark.parametrize("changes", [dict(expires_at="2000-01-01T00:00:00Z"),
-    dict(expires_at="2099-01-01"), dict(token_sha256=["invalid"]), dict(actions="create_issue")])
+    dict(expires_at="2026-01-01"), dict(token_sha256=["invalid"]), dict(actions="create_issue")])
 def test_invalid_or_expired_personal_credentials_never_fall_back(monkeypatch, changes):
     configure(monkeypatch, **changes)
     # A matching legacy token must not rescue invalid personal configuration.
