@@ -55,7 +55,7 @@ def authorize_handoff(token, repository, action):
         identity = matches[0]
         expiry = datetime.fromisoformat(identity["expires_at"].replace("Z", "+00:00"))
         if expiry <= datetime.now(timezone.utc):
-            raise GitHubWorkflowError("Handoff credential has expired.")
+            raise GitHubWorkflowError("Invalid handoff access token.")
         if repository not in identity["repositories"] or action not in identity["actions"]:
             raise GitHubWorkflowError("Handoff identity is not authorized for this repository/action.")
         return identity["actor"]

@@ -77,3 +77,13 @@ def test_legacy_token_works_only_without_personal_configuration(monkeypatch):
     monkeypatch.delenv("GITHUB_HANDOFF_REQUIRE_IDENTITIES", raising=False)
     monkeypatch.setenv("GITHUB_HANDOFF_TOKEN", "shared")
     assert authorize_handoff("shared", "org/repo", "create_issue") == "legacy-shared-token"
+
+
+def test_expired_and_invalid_tokens_return_identical_errors(monkeypatch):
+    configure(monkeypatch, expires_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat())
+    errors = []
+    for token in ("personal-secret", "unknown-secret", ""):
+        with pytest.raises(GitHubWorkflowError) as caught:
+            authorize_handoff(token, "org/repo", "create_issue")
+        errors.append(str(caught.value))
+    assert errors == ["Invalid handoff access token."] * 3
