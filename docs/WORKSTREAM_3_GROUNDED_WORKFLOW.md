@@ -57,7 +57,7 @@ Set `GITHUB_HANDOFF_REQUIRE_IDENTITIES=true` for production. Configure
 `GITHUB_HANDOFF_IDENTITIES` as a JSON array in deployment secrets, for example:
 
 ```json
-[{"actor":"alice","token_sha256":["<64-character lowercase SHA-256 digest>"],"repositories":["org/repo"],"actions":["create_issue","comment_pr"],"expires_at":"2027-01-01T00:00:00Z"}]
+[{"actor":"test_user1","token_sha256":["<64-character lowercase SHA-256 digest>"],"repositories":["org/repo"],"actions":["create_issue","comment_pr"],"expires_at":"2027-01-01T00:00:00Z"}]
 ```
 
 Issue a unique, cryptographically random token (at least 32 random bytes) to

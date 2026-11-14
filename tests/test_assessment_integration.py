@@ -369,7 +369,7 @@ def test_related_session_history_does_not_cross_browser_owners():
 
 @pytest.mark.parametrize("action", ["create_issue", "comment_pr"])
 def test_github_handoff_missing_status_is_audited(monkeypatch, action):
-    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "alice")
+    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "test_user1")
     client = MagicMock()
     client.create_advisory_issue.return_value = {"url": "https://github.test/1"}
     client.comment_on_pull_request.return_value = {"url": "https://github.test/1"}
@@ -382,7 +382,7 @@ def test_github_handoff_missing_status_is_audited(monkeypatch, action):
 
 
 def test_github_handoff_logs_unexpected_exception_before_audit(monkeypatch):
-    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "alice")
+    monkeypatch.setattr(app, "authorize_handoff", lambda *args: "test_user1")
     client = MagicMock()
     client.create_advisory_issue.side_effect = RuntimeError("diagnostic failure")
     monkeypatch.setattr(app, "GitHubWorkflowClient", lambda repo: client)

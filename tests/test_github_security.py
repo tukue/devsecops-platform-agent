@@ -9,7 +9,7 @@ from src.github_workflow import GitHubWorkflowError
 
 
 def configure(monkeypatch, **changes):
-    identity = dict(actor="alice", token_sha256=[hashlib.sha256(b"personal-secret").hexdigest()],
+    identity = dict(actor="test_user1", token_sha256=[hashlib.sha256(b"personal-secret").hexdigest()],
                     repositories=["org/repo"], actions=["create_issue"], expires_at="2099-01-01T00:00:00Z")
     identity.update(changes)
     monkeypatch.setenv("GITHUB_HANDOFF_IDENTITIES", json.dumps([identity]))
@@ -18,7 +18,7 @@ def configure(monkeypatch, **changes):
 
 def test_personal_permissions(monkeypatch):
     configure(monkeypatch)
-    assert authorize_handoff("personal-secret", "org/repo", "create_issue") == "alice"
+    assert authorize_handoff("personal-secret", "org/repo", "create_issue") == "test_user1"
     for token, repo, action in [("wrong", "org/repo", "create_issue"),
                                 ("personal-secret", "other/repo", "create_issue"),
                                 ("personal-secret", "org/repo", "comment_pr")]:
@@ -30,8 +30,8 @@ def test_rotation_and_revocation(monkeypatch):
     old = hashlib.sha256(b"old-secret").hexdigest()
     new = hashlib.sha256(b"new-secret").hexdigest()
     configure(monkeypatch, token_sha256=[old, new])
-    assert authorize_handoff("old-secret", "org/repo", "create_issue") == "alice"
-    assert authorize_handoff("new-secret", "org/repo", "create_issue") == "alice"
+    assert authorize_handoff("old-secret", "org/repo", "create_issue") == "test_user1"
+    assert authorize_handoff("new-secret", "org/repo", "create_issue") == "test_user1"
     configure(monkeypatch, token_sha256=[new])
     with pytest.raises(GitHubWorkflowError):
         authorize_handoff("old-secret", "org/repo", "create_issue")
@@ -57,14 +57,14 @@ def test_production_disables_shared_token(monkeypatch):
 
 def test_audit_is_structured(caplog):
     with caplog.at_level(logging.INFO, logger="devsecops_advisor.github_security"):
-        audit_handoff("trace", "alice", "create_issue", "org/repo", "issue_created")
+        audit_handoff("trace", "test_user1", "create_issue", "org/repo", "issue_created")
     event = json.loads(caplog.records[-1].message)
-    assert event["actor"] == "alice"
+    assert event["actor"] == "test_user1"
     assert event["outcome"] == "issue_created"
     assert "token" not in event
 
 
-@pytest.mark.parametrize("raw", ["not-json", "[]", '[{"actor":"alice"}]'])
+@pytest.mark.parametrize("raw", ["not-json", "[]", '[{"actor":"test_user1"}]'])
 def test_malformed_identity_configuration_returns_generic_error(monkeypatch, raw):
     monkeypatch.setenv("GITHUB_HANDOFF_IDENTITIES", raw)
     with pytest.raises(GitHubWorkflowError, match=r"^Invalid handoff access token\.$"):
