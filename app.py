@@ -1,6 +1,5 @@
 import spaces
 import gradio as gr
-import hmac
 import os
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
@@ -9,6 +8,7 @@ from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_checkov_import, prepare_security_hub_import
 from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
+from src.github_security import authorize_handoff, audit_handoff, handoff_event_id
 from src.memory import ConversationMemory
 from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
@@ -301,34 +301,30 @@ def analyze_uploaded_findings(source, upload, session_id=None, request: gr.Reque
         return {"error": str(exc)}
 
 
-def _authorize_handoff(access_token):
-    """Require the deployment's handoff token before any GitHub write."""
-    expected = str(os.getenv("GITHUB_HANDOFF_TOKEN") or "").strip()
-    if not expected:
-        raise GitHubWorkflowError(
-            "GitHub handoff is disabled: set GITHUB_HANDOFF_TOKEN in the app environment."
-        )
-    presented = str(access_token or "").strip()
-    if not presented or not hmac.compare_digest(presented, expected):
-        raise GitHubWorkflowError("Invalid handoff access token.")
+def _github_handoff(assessment, repository, access_token, action, pull_request=None):
+    event_id = handoff_event_id()
+    actor = "unauthenticated"
+    try:
+        actor = authorize_handoff(access_token, repository, action)
+        client = GitHubWorkflowClient(repository)
+        result = (client.create_advisory_issue(assessment) if action == "create_issue"
+                  else client.comment_on_pull_request(pull_request, assessment))
+        audit_handoff(event_id, actor, action, repository, result["status"])
+        return result
+    except GitHubWorkflowError as exc:
+        audit_handoff(event_id, actor, action, repository, "denied_or_failed")
+        return {"error": str(exc)}
+    except Exception:
+        audit_handoff(event_id, actor, action, repository, "unexpected_failure")
+        return {"error": "GitHub handoff failed.", "event_id": event_id}
 
 
 def create_github_issue(assessment, repository, access_token=None):
-    try:
-        _authorize_handoff(access_token)
-        return GitHubWorkflowClient(repository).create_advisory_issue(assessment)
-    except GitHubWorkflowError as exc:
-        return {"error": str(exc)}
+    return _github_handoff(assessment, repository, access_token, "create_issue")
 
 
 def comment_on_github_pr(assessment, repository, pull_request, access_token=None):
-    try:
-        _authorize_handoff(access_token)
-        return GitHubWorkflowClient(repository).comment_on_pull_request(
-            pull_request, assessment
-        )
-    except GitHubWorkflowError as exc:
-        return {"error": str(exc)}
+    return _github_handoff(assessment, repository, access_token, "comment_pr", pull_request)
 
 
 @spaces.GPU
@@ -476,7 +472,7 @@ with gr.Blocks(
         gr.Markdown(
             "Opens an ordinary issue titled `[Agent draft] …` (GitHub's API has no draft "
             "issues) or adds an advisory comment on a pull request. Requires `GITHUB_TOKEN`, "
-            "an allowlist in `GITHUB_ALLOWED_REPOSITORIES`, and `GITHUB_HANDOFF_TOKEN` in "
+            "an allowlist in `GITHUB_ALLOWED_REPOSITORIES`, and personal credentials in `GITHUB_HANDOFF_IDENTITIES` in "
             "the app environment."
         )
         github_repository = gr.Textbox(
