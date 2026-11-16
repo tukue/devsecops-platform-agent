@@ -16,11 +16,12 @@ from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
 from src.output_filter import filter_output
+from src.output_guard import guard_result
 from src.observability import (
     setup_logging, PerformanceTimer, record_request, record_validation_block,
     record_output_filter_issue, record_rag_retrieval, record_ensemble_disagreement,
     record_rag_grounding, record_human_review, record_error, record_session, record_finding_in_session,
-    get_metrics, get_health_status, reset_metrics,
+    get_metrics, get_health_status, reset_metrics, _get_trace_id,
 )
 
 setup_logging(level="INFO", json_format=False)
@@ -59,13 +60,18 @@ def _request_owner(request):
     return getattr(request, "session_hash", None)
 
 
-def analyze_finding(finding, session_id=None, metadata=None, owner=None):
-    trace_id = None
-    from src.observability import _get_trace_id
+def analyze_finding(finding, session_id=None, metadata=None, owner=None,
+                    enforce_rate_limit=True):
     trace_id = _get_trace_id()
 
+    # Rate limits are enforced per client (browser session owner), not against
+    # a shared global bucket, so one client cannot starve the others.
     with PerformanceTimer("input_validation", trace_id):
-        valid, errors, warnings = validate_input(finding)
+        valid, errors, warnings = validate_input(
+            finding,
+            client_id=owner or "default",
+            enforce_rate_limit=enforce_rate_limit,
+        )
         if not valid:
             record_validation_block(errors[0] if errors else "unknown")
             record_error("validation", errors[0])
@@ -226,11 +232,29 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "source_citation": rec_source_citation,
     }
 
+    # Fail-closed postcondition over the *whole* payload: evidence, risk
+    # summary, citations, and session context all bypass filter_output above.
+    guard_report = guard_result(result)
+
     if warnings:
         result["input_warnings"] = warnings
 
     if not filtered["safe"]:
         result["output_warnings"] = filtered["issues"]
+
+    if not guard_report["safe"]:
+        result["output_blocked"] = guard_report["blocked"]
+        result["output_guard_violations"] = guard_report["violations"]
+        violation_types = sorted({
+            violation
+            for violations in guard_report["violations"].values()
+            for violation in violations
+        })
+        for violation_type in violation_types:
+            record_output_filter_issue(f"guard:{violation_type}")
+        if guard_report["blocked"]:
+            result["human_review_required"] = True
+            result["automation_allowed"] = False
 
     memory.add_interaction(session_id, finding, result)
 
@@ -256,9 +280,17 @@ def _analyze_import_records(records, session_id=None, owner=None):
     batch_session, session_created = sessions.resolve(session_id, owner)
     if session_created:
         record_session(batch_session)
+    # Rate-limit the batch as a single client request (first record) instead
+    # of letting a 500-finding export exhaust its own per-minute budget.
     return [
-        analyze_finding(finding, session_id=batch_session, metadata=metadata, owner=owner)
-        for finding, metadata in records
+        analyze_finding(
+            finding,
+            session_id=batch_session,
+            metadata=metadata,
+            owner=owner,
+            enforce_rate_limit=index == 0,
+        )
+        for index, (finding, metadata) in enumerate(records)
     ]
 
 
@@ -335,9 +367,12 @@ def comment_on_github_pr(assessment, repository, pull_request, access_token=None
 def review_finding(finding, session_id=None, request: gr.Request = None):
     try:
         return analyze_finding(finding, session_id, owner=_request_owner(request))
-    except Exception as e:
-        record_error("exception", str(e))
-        return {"error": str(e)}
+    except Exception as exc:
+        trace_id = _get_trace_id()
+        # Full detail stays in server logs; the client gets an opaque failure.
+        logger.exception("Assessment failed (trace_id=%s, type=%s)", trace_id, type(exc).__name__)
+        record_error("exception", type(exc).__name__)
+        return {"error": "Assessment failed. Please retry.", "trace_id": trace_id}
 
 
 @spaces.GPU
@@ -367,10 +402,32 @@ def review_finding_with_cot(finding, session_id=None, request: gr.Request = None
         )
 
         result["chain_of_thought"] = chain_of_thought
+
+        # The explanation is generated text too: re-guard the payload now that
+        # chain_of_thought has been attached.
+        cot_report = guard_result(result)
+        if not cot_report["safe"]:
+            result["output_blocked"] = (
+                result.get("output_blocked", False) or cot_report["blocked"]
+            )
+            merged = dict(result.get("output_guard_violations", {}))
+            merged.update(cot_report["violations"])
+            result["output_guard_violations"] = merged
+            for violation_type in sorted({
+                violation
+                for violations in cot_report["violations"].values()
+                for violation in violations
+            }):
+                record_output_filter_issue(f"guard:{violation_type}")
+            if cot_report["blocked"]:
+                result["human_review_required"] = True
+                result["automation_allowed"] = False
         return result
-    except Exception as e:
-        record_error("exception", str(e))
-        return {"error": str(e)}
+    except Exception as exc:
+        trace_id = _get_trace_id()
+        logger.exception("Assessment failed (trace_id=%s, type=%s)", trace_id, type(exc).__name__)
+        record_error("exception", type(exc).__name__)
+        return {"error": "Assessment failed. Please retry.", "trace_id": trace_id}
 
 
 def clear_session(session_id=None, request: gr.Request = None):
