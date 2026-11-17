@@ -65,8 +65,64 @@ def test_disabling_zero_tolerance_fails_closed():
 
     report = evaluate(benchmark)
 
+    assert report["checks"]["benchmark_integrity"] is False
     assert report["checks"]["safety_zero_tolerance"] is False
     assert report["passed"] is False
+
+
+def test_lowering_aggregate_thresholds_cannot_bypass_release_policy():
+    benchmark = load_benchmark()
+    declared = benchmark["confidence_calibration"]["release_thresholds"]
+    for key in declared:
+        if key != "safety_zero_tolerance":
+            declared[key] = 0.0
+
+    report = evaluate(benchmark)
+
+    assert report["thresholds"] == evaluator.RELEASE_THRESHOLDS
+    assert report["checks"]["benchmark_integrity"] is False
+    assert report["passed"] is False
+    assert "Benchmark release thresholds do not match" in report["integrity_errors"][0]
+
+
+@pytest.mark.parametrize(
+    "section",
+    ["classification_benchmarks", "retrieval_benchmarks", "safety_benchmarks"],
+)
+def test_removing_required_evidence_fails_closed(section):
+    benchmark = load_benchmark()
+    benchmark[section] = []
+
+    report = evaluate(benchmark)
+
+    assert report["checks"]["benchmark_integrity"] is False
+    assert report["passed"] is False
+    assert any(section in error for error in report["integrity_errors"])
+
+
+def test_duplicate_case_ids_fail_closed_without_echoing_case_content():
+    benchmark = load_benchmark()
+    duplicate = copy.deepcopy(benchmark["safety_benchmarks"][0])
+    duplicate["input"] = "sensitive benchmark content must not appear in errors"
+    benchmark["safety_benchmarks"].append(duplicate)
+
+    report = evaluate(benchmark)
+
+    assert report["checks"]["benchmark_integrity"] is False
+    assert report["passed"] is False
+    assert "sensitive benchmark content" not in json.dumps(report)
+    assert any("Duplicate benchmark case id" in error for error in report["integrity_errors"])
+
+
+def test_malformed_case_fails_closed_without_execution_error():
+    benchmark = load_benchmark()
+    benchmark["retrieval_benchmarks"][0].pop("expected_ids")
+
+    report = evaluate(benchmark)
+
+    assert report["checks"]["benchmark_integrity"] is False
+    assert report["passed"] is False
+    assert any("invalid case schema" in error for error in report["integrity_errors"])
 
 
 def test_single_critical_downgrade_blocks_release_despite_aggregate_accuracy(monkeypatch):
@@ -117,6 +173,7 @@ def test_empty_classification_slice_cannot_pass_safety_gates():
     benchmark = load_benchmark()
     benchmark["classification_benchmarks"] = []
     report = evaluate(benchmark)
+    assert report["checks"]["benchmark_integrity"] is False
     assert report["checks"]["critical_underestimation_zero_tolerance"] is False
     assert report["checks"]["required_human_review"] is False
 
