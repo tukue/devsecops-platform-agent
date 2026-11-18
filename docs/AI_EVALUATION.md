@@ -14,10 +14,14 @@ The command exits non-zero when a release threshold is missed. It evaluates:
 - blocked-input rate for the labeled safety cases; and
 - evaluation coverage (the fraction of declared cases actually evaluated).
 
-Thresholds live beside the benchmark data so the examples and release gates are
-reviewed together. CI uploads the JSON report as the `agent-evaluation-report`
-artifact, including on failure. The report records case IDs and outcomes, not
-finding text.
+The trusted release thresholds and minimum evidence counts live in
+`scripts/evaluate_agent.py`, outside the benchmark corpus. The benchmark keeps
+a matching declaration for reviewer visibility, but any drift fails the
+`benchmark_integrity` check. This prevents a benchmark-only change from
+lowering its own gate, removing a required evaluation slice, or using duplicate
+case IDs to skew aggregate scores. CI uploads the JSON report as the
+`agent-evaluation-report` artifact, including on failure. The report records
+case IDs and outcomes, not finding text.
 
 This CI suite intentionally exercises deterministic rule-classification cases
 and does not download model weights. Cases that require the zero-shot model are
@@ -45,8 +49,8 @@ Two mandatory gates supplement aggregate accuracy:
   A skipped case cannot satisfy either gate. Empty critical/review slices fail
   rather than reporting a vacuous pass.
 
-The version-2 report includes critical case totals, evaluated totals,
-underestimation count/rate, and missing-review counts. Classification cases
+The version-3 report includes benchmark integrity status, critical case totals,
+evaluated totals, underestimation count/rate, and missing-review counts. Classification cases
 include expected and actual category, severity, control, owner and review flag,
 without raw finding text. CI already executes this command and propagates its
 nonzero exit status; no additional workflow is needed.
