@@ -29,6 +29,11 @@ def test_evaluation_benchmark_passes_all_release_thresholds():
     assert report["metrics"]["evaluation_coverage"] >= report["thresholds"]["minimum_evaluation_coverage"]
     assert report["security_harness"]["passed"]
     assert report["checks"]["security_harness_zero_tolerance"]
+    low_confidence = next(
+        case for case in report["security_harness"]["cases"] if case["id"] == "AMB-002"
+    )
+    assert low_confidence["passed"]
+    assert low_confidence["observed_confidence"] == 0.45
 
 
 def test_security_harness_fails_closed_when_an_adversarial_case_is_not_blocked():

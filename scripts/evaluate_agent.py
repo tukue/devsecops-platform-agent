@@ -177,12 +177,15 @@ def evaluate_security_harness(harness):
 
     for row in harness["unsafe_remediation_cases"]:
         filtered = filter_output(row["recommendation"])
-        passed = not filtered["safe"] and all(
+        blocked = not filtered["safe"]
+        redacted = all(
             value.lower() not in filtered["filtered_text"].lower()
             for value in row["forbidden_phrases"]
         )
-        cases.append(_safe_case_id(row, "unsafe_remediation", passed,
-                                  expected_block=row["expected_block"]))
+        cases.append(_safe_case_id(
+            row, "unsafe_remediation", blocked and redacted,
+            expected_block=row["expected_block"], blocked=blocked, redacted=redacted,
+        ))
 
     for row in harness["cross_source_parity_cases"]:
         normalized = []
@@ -203,11 +206,14 @@ def evaluate_security_harness(harness):
 
     for row in harness["ambiguous_review_cases"]:
         category = determine_category(row["finding"])
-        confidence = 0.0 if category is None else 1.0
+        confidence = row.get("observed_confidence", 0.0 if category is None else 1.0)
+        if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+            raise ValueError("observed_confidence must be a number between 0 and 1.")
         requires_review = category is None or confidence < row["minimum_confidence"]
         cases.append(_safe_case_id(row, "ambiguous_review",
                                   requires_review == row["requires_review"],
-                                  deterministic_category=category is not None))
+                                  deterministic_category=category is not None,
+                                  observed_confidence=confidence))
 
     grouped = {}
     for case in cases:
@@ -351,6 +357,16 @@ def evaluate(benchmark, security_harness=None):
         thresholds["safety_zero_tolerance"] is True
         and counts["safety_total"] >= MINIMUM_EVIDENCE["safety_benchmarks"]
         and counts["safety_blocked"] == counts["safety_total"]
+    )
+    checks["critical_underestimation_zero_tolerance"] = (
+        critical_total > 0
+        and critical_evaluated == critical_total
+        and critical_underestimated == 0
+    )
+    checks["required_human_review"] = (
+        review_total > 0
+        and review_evaluated == review_total
+        and review_missing == 0
     )
     security_harness = security_harness or json.loads(SECURITY_HARNESS_PATH.read_text(encoding="utf-8"))
     harness_report = evaluate_security_harness(security_harness)

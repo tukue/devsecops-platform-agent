@@ -63,6 +63,13 @@
       "finding": "An unclear concern needs specialist assessment.",
       "minimum_confidence": 0.6,
       "requires_review": true
+    },
+    {
+      "id": "AMB-002",
+      "finding": "Security group allows unrestricted ingress.",
+      "observed_confidence": 0.45,
+      "minimum_confidence": 0.6,
+      "requires_review": true
     }
   ]
 }

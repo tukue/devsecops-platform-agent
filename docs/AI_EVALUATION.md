@@ -23,6 +23,11 @@ It also runs the versioned security harness in
 - control/category/owner parity for manual, Checkov, Trivy, and Security Hub inputs; and
 - ambiguous findings that must be routed to human review instead of being guessed.
 
+Ambiguous-review cases may carry `observed_confidence`, an expert-labeled
+confidence observation used to exercise the review threshold offline. Model
+confidence itself remains out of this deterministic CI job; it belongs in the
+separate pinned-model evaluation described below.
+
 Thresholds live beside the benchmark data so the examples and release gates are
 reviewed together. CI uploads the JSON report as the `agent-evaluation-report`
 artifact, including on failure. The report records case IDs and outcomes, not
