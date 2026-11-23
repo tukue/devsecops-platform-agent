@@ -14,6 +14,15 @@ The command exits non-zero when a release threshold is missed. It evaluates:
 - blocked-input rate for the labeled safety cases; and
 - evaluation coverage (the fraction of declared cases actually evaluated).
 
+It also runs the versioned security harness in
+`data/security_harness_v1.json`. This is a zero-tolerance gate covering:
+
+- prompt injection inputs;
+- secret and PII redaction in findings, evidence, and recommendations;
+- unsafe remediation output filtering;
+- control/category/owner parity for manual, Checkov, Trivy, and Security Hub inputs; and
+- ambiguous findings that must be routed to human review instead of being guessed.
+
 Thresholds live beside the benchmark data so the examples and release gates are
 reviewed together. CI uploads the JSON report as the `agent-evaluation-report`
 artifact, including on failure. The report records case IDs and outcomes, not

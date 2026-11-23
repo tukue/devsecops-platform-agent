@@ -9,18 +9,94 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from src.ensemble import EnsembleClassifier, determine_category
+from src.controls import resolve_control
+from src.findings import canonicalize_finding
+from src.ingestion import normalize_payload
 from src.input_validation import validate_input
+from src.output_filter import filter_output
 from src.retriever import SecurityRetriever
 
 
 BENCHMARK_PATH = ROOT / "data" / "benchmark_sets.json"
+SECURITY_HARNESS_PATH = ROOT / "data" / "security_harness_v1.json"
 
 
 def _accuracy(correct, total):
     return correct / total if total else 0.0
 
 
-def evaluate(benchmark):
+def _safe_case_id(row, kind, passed, **details):
+    """Keep reports privacy-safe: include identifiers and outcomes, never inputs."""
+    return {"id": row["id"], "kind": kind, "passed": passed, **details}
+
+
+def evaluate_security_harness(harness):
+    """Evaluate adversarial, leakage, output, parity, and review-boundary cases."""
+    if harness.get("schema_version") != "1.0":
+        raise ValueError("Unsupported security harness schema version.")
+
+    cases = []
+    for row in harness["input_adversarial_cases"]:
+        accepted, _, _ = validate_input(row["input"], client_id="security-harness-" + row["id"])
+        cases.append(_safe_case_id(row, "input_adversarial", not accepted,
+                                  expected_block=row["expected_block"]))
+
+    for row in harness["redaction_cases"]:
+        canonical = canonicalize_finding(
+            row["finding"],
+            {"category": "Secrets", "severity": "high", "confidence": 0.8},
+            {"id": "secrets.exposure", "owner": "Platform Security"},
+            row.get("metadata", {}),
+        ).to_dict()
+        filtered = filter_output(row["recommendation"])["filtered_text"]
+        serialized = json.dumps(canonical, sort_keys=True) + filtered
+        passed = all(value not in serialized for value in row["must_redact"])
+        cases.append(_safe_case_id(row, "redaction", passed,
+                                  redactions_expected=len(row["must_redact"])))
+
+    for row in harness["unsafe_remediation_cases"]:
+        filtered = filter_output(row["recommendation"])
+        passed = not filtered["safe"] and all(
+            value.lower() not in filtered["filtered_text"].lower()
+            for value in row["forbidden_phrases"]
+        )
+        cases.append(_safe_case_id(row, "unsafe_remediation", passed,
+                                  expected_block=row["expected_block"]))
+
+    for row in harness["cross_source_parity_cases"]:
+        normalized = []
+        for source in row["sources"]:
+            if source["source"] == "manual":
+                normalized.append((source["finding"], source.get("metadata", {})))
+            else:
+                normalized.extend(normalize_payload(source["source"], source["payload"]))
+        outcomes = []
+        for finding, metadata in normalized:
+            category = determine_category(finding)
+            control = resolve_control(finding, category)
+            outcomes.append((category, control["id"] if control else "unclassified", control["owner"] if control else None))
+        expected = (row["expected_category"], row["expected_control"], row["expected_owner"])
+        cases.append(_safe_case_id(row, "cross_source_parity",
+                                  bool(outcomes) and all(outcome == expected for outcome in outcomes),
+                                  sources_evaluated=len(outcomes)))
+
+    for row in harness["ambiguous_review_cases"]:
+        category = determine_category(row["finding"])
+        confidence = 0.0 if category is None else 1.0
+        requires_review = category is None or confidence < row["minimum_confidence"]
+        cases.append(_safe_case_id(row, "ambiguous_review",
+                                  requires_review == row["requires_review"],
+                                  deterministic_category=category is not None))
+
+    grouped = {}
+    for case in cases:
+        grouped.setdefault(case["kind"], []).append(case)
+    checks = {kind: all(case["passed"] for case in rows) for kind, rows in grouped.items()}
+    return {"schema_version": harness["schema_version"], "cases": cases, "checks": checks,
+            "passed": all(checks.values()), "total": len(cases)}
+
+
+def evaluate(benchmark, security_harness=None):
     """Evaluate rule classification, retrieval relevance, and input blocking."""
     thresholds = benchmark["confidence_calibration"]["release_thresholds"]
     classifier = EnsembleClassifier()
@@ -112,12 +188,16 @@ def evaluate(benchmark):
         thresholds["safety_zero_tolerance"] is True
         and counts["safety_blocked"] == counts["safety_total"]
     )
+    security_harness = security_harness or json.loads(SECURITY_HARNESS_PATH.read_text(encoding="utf-8"))
+    harness_report = evaluate_security_harness(security_harness)
+    checks["security_harness_zero_tolerance"] = harness_report["passed"]
     return {
         "schema_version": 1,
         "benchmark_file": "data/benchmark_sets.json",
         "metrics": metrics,
         "thresholds": thresholds,
         "checks": checks,
+        "security_harness": harness_report,
         "passed": all(checks.values()),
         "cases": cases,
     }
