@@ -15,6 +15,11 @@ def load_benchmark():
     return json.loads(benchmark_path.read_text(encoding="utf-8"))
 
 
+def load_security_harness():
+    harness_path = Path(__file__).parents[1] / "data" / "security_harness_v1.json"
+    return json.loads(harness_path.read_text(encoding="utf-8"))
+
+
 def test_evaluation_benchmark_passes_all_release_thresholds():
     benchmark = load_benchmark()
     report = evaluate(benchmark)
@@ -22,6 +27,25 @@ def test_evaluation_benchmark_passes_all_release_thresholds():
     assert report["passed"], report
     assert all(report["checks"].values())
     assert report["metrics"]["evaluation_coverage"] >= report["thresholds"]["minimum_evaluation_coverage"]
+    assert report["security_harness"]["passed"]
+    assert report["checks"]["security_harness_zero_tolerance"]
+    low_confidence = next(
+        case for case in report["security_harness"]["cases"] if case["id"] == "AMB-002"
+    )
+    assert low_confidence["passed"]
+    assert low_confidence["observed_confidence"] == 0.45
+
+
+def test_security_harness_fails_closed_when_a_prompt_injection_case_is_not_blocked():
+    benchmark = load_benchmark()
+    harness = load_security_harness()
+    harness["prompt_injection_cases"][0]["input"] = "A routine security group finding."
+
+    report = evaluate(benchmark, harness)
+
+    assert report["security_harness"]["passed"] is False
+    assert report["checks"]["security_harness_zero_tolerance"] is False
+    assert report["passed"] is False
 
 
 def test_skipped_model_case_is_counted_as_uncovered():

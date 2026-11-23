@@ -14,21 +14,31 @@ The command exits non-zero when a release threshold is missed. It evaluates:
 - blocked-input rate for the labeled safety cases; and
 - evaluation coverage (the fraction of declared cases actually evaluated).
 
-The trusted release thresholds and minimum evidence counts live in
-`scripts/evaluate_agent.py`, outside the benchmark corpus. The benchmark keeps
-a matching declaration for reviewer visibility, but any drift fails the
-`benchmark_integrity` check. This prevents a benchmark-only change from
-lowering its own gate, removing a required evaluation slice, or using duplicate
-case IDs to skew aggregate scores. CI uploads the JSON report as the
-`agent-evaluation-report` artifact, including on failure. The report records
-case IDs and outcomes, not finding text.
+It also runs the versioned security harness in
+`data/security_harness_v1.json`. This is a zero-tolerance gate covering:
+
+- prompt injection inputs;
+- secret and PII redaction in findings, evidence, and recommendations;
+- unsafe remediation output filtering;
+- control/category/owner parity for manual, Checkov, Trivy, and Security Hub inputs; and
+- ambiguous findings that must be routed to human review instead of being guessed.
+
+Ambiguous-review cases may carry `observed_confidence`, an expert-labeled
+confidence observation used to exercise the review threshold offline. Model
+confidence itself remains out of this deterministic CI job; it belongs in the
+separate pinned-model evaluation described below.
+
+Thresholds live beside the benchmark data so the examples and release gates are
+reviewed together. CI uploads the JSON report as the `agent-evaluation-report`
+artifact, including on failure. The report records case IDs and outcomes, not
+finding text.
 
 This CI suite intentionally exercises deterministic rule-classification cases
 and does not download model weights. Cases that require the zero-shot model are
 not silently substituted with model results; add a separate evaluation job with
 pinned model revisions, fixed runtime settings, and its own thresholds before
 using such cases as release evidence. Keep evaluation examples expert-labeled,
-include positive, ambiguous, malformed, and adversarial inputs, and preserve a
+include positive, ambiguous, malformed, and prompt-injection inputs, and preserve a
 held-out set for release evaluation to reduce benchmark overfitting.
 
 ## Increment 1: consequential classification errors
