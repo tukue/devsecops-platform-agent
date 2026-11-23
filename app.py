@@ -1,27 +1,31 @@
 import spaces
 import gradio as gr
-import hmac
 import os
+import logging
 from src.retriever import SecurityRetriever
 from src.ensemble import EnsembleClassifier, REMEDIATIONS, OWNERS, determine_severity
 from src.controls import resolve_control
+from src.review_policy import requires_human_review
 from src.findings import canonicalize_finding
 from src.providers import ProviderRouter
 from src.ingestion import FindingIngestionError, load_json_upload, normalize_payload, prepare_checkov_import, prepare_security_hub_import
 from src.github_workflow import GitHubWorkflowClient, GitHubWorkflowError
+from src.github_security import authorize_handoff, audit_handoff, handoff_event_id
 from src.memory import ConversationMemory
 from src.sessions import SessionRegistry
 from src.chain_of_thought import generate_chain_of_thought
 from src.input_validation import validate_input
 from src.output_filter import filter_output
+from src.output_guard import guard_result
 from src.observability import (
     setup_logging, PerformanceTimer, record_request, record_validation_block,
     record_output_filter_issue, record_rag_retrieval, record_ensemble_disagreement,
     record_rag_grounding, record_human_review, record_error, record_session, record_finding_in_session,
-    get_metrics, get_health_status, reset_metrics,
+    get_metrics, get_health_status, reset_metrics, _get_trace_id,
 )
 
 setup_logging(level="INFO", json_format=False)
+logger = logging.getLogger("devsecops_advisor.github_handoff")
 
 ANALYZE_BUTTON_CSS = """
 #analyze-button button,
@@ -56,13 +60,18 @@ def _request_owner(request):
     return getattr(request, "session_hash", None)
 
 
-def analyze_finding(finding, session_id=None, metadata=None, owner=None):
-    trace_id = None
-    from src.observability import _get_trace_id
+def analyze_finding(finding, session_id=None, metadata=None, owner=None,
+                    enforce_rate_limit=True):
     trace_id = _get_trace_id()
 
+    # Rate limits are enforced per client (browser session owner), not against
+    # a shared global bucket, so one client cannot starve the others.
     with PerformanceTimer("input_validation", trace_id):
-        valid, errors, warnings = validate_input(finding)
+        valid, errors, warnings = validate_input(
+            finding,
+            client_id=owner or "default",
+            enforce_rate_limit=enforce_rate_limit,
+        )
         if not valid:
             record_validation_block(errors[0] if errors else "unknown")
             record_error("validation", errors[0])
@@ -207,7 +216,7 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "rollback_guidance": rollback_guidance,
         "citations": citations,
         "finding": canonical_finding.to_dict(),
-        "human_review_required": classification["severity"] in {"high", "critical"} or classification["confidence"] < 0.60,
+        "human_review_required": requires_human_review(classification),
         "automation_allowed": False,
         "rag_sources": rag_sources,
         "session_id": session_id,
@@ -223,11 +232,29 @@ def analyze_finding(finding, session_id=None, metadata=None, owner=None):
         "source_citation": rec_source_citation,
     }
 
+    # Fail-closed postcondition over the *whole* payload: evidence, risk
+    # summary, citations, and session context all bypass filter_output above.
+    guard_report = guard_result(result)
+
     if warnings:
         result["input_warnings"] = warnings
 
     if not filtered["safe"]:
         result["output_warnings"] = filtered["issues"]
+
+    if not guard_report["safe"]:
+        result["output_blocked"] = guard_report["blocked"]
+        result["output_guard_violations"] = guard_report["violations"]
+        violation_types = sorted({
+            violation
+            for violations in guard_report["violations"].values()
+            for violation in violations
+        })
+        for violation_type in violation_types:
+            record_output_filter_issue(f"guard:{violation_type}")
+        if guard_report["blocked"]:
+            result["human_review_required"] = True
+            result["automation_allowed"] = False
 
     memory.add_interaction(session_id, finding, result)
 
@@ -253,9 +280,17 @@ def _analyze_import_records(records, session_id=None, owner=None):
     batch_session, session_created = sessions.resolve(session_id, owner)
     if session_created:
         record_session(batch_session)
+    # Rate-limit the batch as a single client request (first record) instead
+    # of letting a 500-finding export exhaust its own per-minute budget.
     return [
-        analyze_finding(finding, session_id=batch_session, metadata=metadata, owner=owner)
-        for finding, metadata in records
+        analyze_finding(
+            finding,
+            session_id=batch_session,
+            metadata=metadata,
+            owner=owner,
+            enforce_rate_limit=index == 0,
+        )
+        for index, (finding, metadata) in enumerate(records)
     ]
 
 
@@ -301,43 +336,43 @@ def analyze_uploaded_findings(source, upload, session_id=None, request: gr.Reque
         return {"error": str(exc)}
 
 
-def _authorize_handoff(access_token):
-    """Require the deployment's handoff token before any GitHub write."""
-    expected = str(os.getenv("GITHUB_HANDOFF_TOKEN") or "").strip()
-    if not expected:
-        raise GitHubWorkflowError(
-            "GitHub handoff is disabled: set GITHUB_HANDOFF_TOKEN in the app environment."
-        )
-    presented = str(access_token or "").strip()
-    if not presented or not hmac.compare_digest(presented, expected):
-        raise GitHubWorkflowError("Invalid handoff access token.")
+def _github_handoff(assessment, repository, access_token, action, pull_request=None):
+    event_id = handoff_event_id()
+    actor = "unauthenticated"
+    try:
+        actor = authorize_handoff(access_token, repository, action)
+        client = GitHubWorkflowClient(repository)
+        result = (client.create_advisory_issue(assessment) if action == "create_issue"
+                  else client.comment_on_pull_request(pull_request, assessment))
+        audit_handoff(event_id, actor, action, repository, result.get("status", "unknown"))
+        return result
+    except GitHubWorkflowError as exc:
+        audit_handoff(event_id, actor, action, repository, "denied_or_failed")
+        return {"error": str(exc)}
+    except Exception:
+        logger.exception("Unexpected GitHub handoff failure (event_id=%s)", event_id)
+        audit_handoff(event_id, actor, action, repository, "unexpected_failure")
+        return {"error": "GitHub handoff failed.", "event_id": event_id}
 
 
 def create_github_issue(assessment, repository, access_token=None):
-    try:
-        _authorize_handoff(access_token)
-        return GitHubWorkflowClient(repository).create_advisory_issue(assessment)
-    except GitHubWorkflowError as exc:
-        return {"error": str(exc)}
+    return _github_handoff(assessment, repository, access_token, "create_issue")
 
 
 def comment_on_github_pr(assessment, repository, pull_request, access_token=None):
-    try:
-        _authorize_handoff(access_token)
-        return GitHubWorkflowClient(repository).comment_on_pull_request(
-            pull_request, assessment
-        )
-    except GitHubWorkflowError as exc:
-        return {"error": str(exc)}
+    return _github_handoff(assessment, repository, access_token, "comment_pr", pull_request)
 
 
 @spaces.GPU
 def review_finding(finding, session_id=None, request: gr.Request = None):
     try:
         return analyze_finding(finding, session_id, owner=_request_owner(request))
-    except Exception as e:
-        record_error("exception", str(e))
-        return {"error": str(e)}
+    except Exception as exc:
+        trace_id = _get_trace_id()
+        # Full detail stays in server logs; the client gets an opaque failure.
+        logger.exception("Assessment failed (trace_id=%s, type=%s)", trace_id, type(exc).__name__)
+        record_error("exception", type(exc).__name__)
+        return {"error": "Assessment failed. Please retry.", "trace_id": trace_id}
 
 
 @spaces.GPU
@@ -367,10 +402,32 @@ def review_finding_with_cot(finding, session_id=None, request: gr.Request = None
         )
 
         result["chain_of_thought"] = chain_of_thought
+
+        # The explanation is generated text too: re-guard the payload now that
+        # chain_of_thought has been attached.
+        cot_report = guard_result(result)
+        if not cot_report["safe"]:
+            result["output_blocked"] = (
+                result.get("output_blocked", False) or cot_report["blocked"]
+            )
+            merged = dict(result.get("output_guard_violations", {}))
+            merged.update(cot_report["violations"])
+            result["output_guard_violations"] = merged
+            for violation_type in sorted({
+                violation
+                for violations in cot_report["violations"].values()
+                for violation in violations
+            }):
+                record_output_filter_issue(f"guard:{violation_type}")
+            if cot_report["blocked"]:
+                result["human_review_required"] = True
+                result["automation_allowed"] = False
         return result
-    except Exception as e:
-        record_error("exception", str(e))
-        return {"error": str(e)}
+    except Exception as exc:
+        trace_id = _get_trace_id()
+        logger.exception("Assessment failed (trace_id=%s, type=%s)", trace_id, type(exc).__name__)
+        record_error("exception", type(exc).__name__)
+        return {"error": "Assessment failed. Please retry.", "trace_id": trace_id}
 
 
 def clear_session(session_id=None, request: gr.Request = None):
@@ -476,7 +533,7 @@ with gr.Blocks(
         gr.Markdown(
             "Opens an ordinary issue titled `[Agent draft] …` (GitHub's API has no draft "
             "issues) or adds an advisory comment on a pull request. Requires `GITHUB_TOKEN`, "
-            "an allowlist in `GITHUB_ALLOWED_REPOSITORIES`, and `GITHUB_HANDOFF_TOKEN` in "
+            "an allowlist in `GITHUB_ALLOWED_REPOSITORIES`, and personal credentials in `GITHUB_HANDOFF_IDENTITIES` in "
             "the app environment."
         )
         github_repository = gr.Textbox(

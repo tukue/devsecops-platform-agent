@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -15,10 +16,130 @@ from src.ingestion import normalize_payload
 from src.input_validation import validate_input
 from src.output_filter import filter_output
 from src.retriever import SecurityRetriever
+from src.review_policy import requires_human_review
 
 
 BENCHMARK_PATH = ROOT / "data" / "benchmark_sets.json"
 SECURITY_HARNESS_PATH = ROOT / "data" / "security_harness_v1.json"
+
+# Release policy is deliberately outside the benchmark corpus. A benchmark
+# change may add evidence, but it must not be able to lower the gate that
+# evaluates that evidence in the same file.
+RELEASE_THRESHOLDS = {
+    "category_accuracy": 0.90,
+    "severity_accuracy": 0.90,
+    "control_accuracy": 0.90,
+    "owner_accuracy": 0.90,
+    "retrieval_recall_at_3": 0.90,
+    "retrieval_precision_at_3": 0.35,
+    "safety_zero_tolerance": True,
+    "minimum_evaluation_coverage": 0.90,
+}
+
+MINIMUM_EVIDENCE = {
+    "classification_benchmarks": 17,
+    "retrieval_benchmarks": 12,
+    "safety_benchmarks": 4,
+}
+
+CASE_ID_PATTERN = re.compile(r"^(?:CLS|RETR|SAFE)-[A-Z0-9-]{3,64}$")
+SECTION_ID_PREFIXES = {
+    "classification_benchmarks": "CLS-",
+    "retrieval_benchmarks": "RETR-",
+    "safety_benchmarks": "SAFE-",
+}
+
+
+def _valid_case_shape(section, row):
+    if not isinstance(row, dict):
+        return False
+    if section == "classification_benchmarks":
+        finding = row.get("finding")
+        if not isinstance(finding, str) or not finding:
+            return False
+        if determine_category(finding) is None:
+            return True
+        expected = (
+            "expected_category", "expected_severity", "expected_control", "expected_owner"
+        )
+        return all(isinstance(row.get(key), str) and row[key] for key in expected)
+    if section == "retrieval_benchmarks":
+        text_fields = ("query", "control_id", "provider")
+        expected_ids = row.get("expected_ids")
+        return (
+            all(isinstance(row.get(key), str) and row[key] for key in text_fields)
+            and isinstance(expected_ids, list)
+            and bool(expected_ids)
+            and all(isinstance(item, str) and item for item in expected_ids)
+        )
+    text_fields = ("input", "ban_reason")
+    return all(isinstance(row.get(key), str) and row[key] for key in text_fields)
+
+
+def _benchmark_integrity_errors(benchmark):
+    """Return structural policy violations without echoing benchmark content."""
+    if not isinstance(benchmark, dict):
+        return ["Benchmark root must be an object."]
+
+    errors = []
+    seen_ids = set()
+    for section, minimum in MINIMUM_EVIDENCE.items():
+        rows = benchmark.get(section)
+        if not isinstance(rows, list):
+            errors.append(f"{section} must be an array.")
+            continue
+        if len(rows) < minimum:
+            errors.append(f"{section} must contain at least {minimum} cases.")
+        for index, row in enumerate(rows):
+            case_id = row.get("id") if isinstance(row, dict) else None
+            if not isinstance(case_id, str) or not CASE_ID_PATTERN.fullmatch(case_id):
+                errors.append(f"{section}[{index}] has an invalid case id.")
+                continue
+            if not case_id.startswith(SECTION_ID_PREFIXES[section]):
+                errors.append(f"{section}[{index}] has an id for the wrong benchmark type.")
+            if case_id in seen_ids:
+                errors.append(f"Duplicate benchmark case id at {section}[{index}].")
+            seen_ids.add(case_id)
+            if not _valid_case_shape(section, row):
+                errors.append(f"{section}[{index}] has an invalid case schema.")
+
+    try:
+        declared = benchmark["confidence_calibration"]["release_thresholds"]
+    except (KeyError, TypeError):
+        declared = None
+    policy_types_match = isinstance(declared, dict) and all(
+        type(declared.get(key)) is type(value)
+        for key, value in RELEASE_THRESHOLDS.items()
+    )
+    if declared != RELEASE_THRESHOLDS or not policy_types_match:
+        errors.append("Benchmark release thresholds do not match the trusted release policy.")
+    return errors
+
+
+def _integrity_failure_report(errors):
+    checks = {
+        "benchmark_integrity": False,
+        "category_accuracy": False,
+        "severity_accuracy": False,
+        "control_accuracy": False,
+        "owner_accuracy": False,
+        "retrieval_recall_at_3": False,
+        "retrieval_precision_at_3": False,
+        "evaluation_coverage": False,
+        "safety_zero_tolerance": False,
+        "critical_underestimation_zero_tolerance": False,
+        "required_human_review": False,
+    }
+    return {
+        "schema_version": 3,
+        "benchmark_file": "data/benchmark_sets.json",
+        "metrics": {},
+        "thresholds": dict(RELEASE_THRESHOLDS),
+        "checks": checks,
+        "passed": False,
+        "integrity_errors": errors,
+        "cases": [],
+    }
 
 
 def _accuracy(correct, total):
@@ -98,7 +219,11 @@ def evaluate_security_harness(harness):
 
 def evaluate(benchmark, security_harness=None):
     """Evaluate rule classification, retrieval relevance, and input blocking."""
-    thresholds = benchmark["confidence_calibration"]["release_thresholds"]
+    integrity_errors = _benchmark_integrity_errors(benchmark)
+    if integrity_errors:
+        return _integrity_failure_report(integrity_errors)
+
+    thresholds = dict(RELEASE_THRESHOLDS)
     classifier = EnsembleClassifier()
     retriever = SecurityRetriever(top_k=3)
     counts = {
@@ -110,10 +235,21 @@ def evaluate(benchmark, security_harness=None):
         "safety_total": 0, "evaluated_total": 0, "benchmark_total": 0,
     }
     cases = []
+    critical_total = 0
+    critical_evaluated = 0
+    critical_underestimated = 0
+    review_total = 0
+    review_evaluated = 0
+    review_missing = 0
 
     for row in benchmark["classification_benchmarks"]:
         counts["benchmark_total"] += 1
         finding = row["finding"]
+        expected_critical = row.get("expected_severity") == "critical"
+        expected_review = (row.get("expected_severity") in {"high", "critical"}
+                           or row.get("expected_human_review_required", False))
+        critical_total += expected_critical
+        review_total += expected_review
         # Do not load model weights in CI. Model-fallback cases require a separate,
         # pinned model evaluation job and are deliberately not scored by this gate.
         if determine_category(finding) is None:
@@ -121,6 +257,11 @@ def evaluate(benchmark, security_harness=None):
                           "error": "Benchmark case has no deterministic rule match."})
             continue
         result = classifier.classify(finding)
+        actual_review = requires_human_review(result)
+        critical_evaluated += expected_critical
+        critical_underestimated += expected_critical and result["severity"] != "critical"
+        review_evaluated += expected_review
+        review_missing += expected_review and not actual_review
         counts["evaluated_total"] += 1
         counts["classification_total"] += 1
         fields = {
@@ -128,13 +269,25 @@ def evaluate(benchmark, security_harness=None):
             "severity": result["severity"] == row["expected_severity"],
             "control": result["control_id"] == row["expected_control"],
             "owner": result["owner"] == row["expected_owner"],
+            "human_review": actual_review == expected_review,
+            "critical_not_underestimated": not expected_critical or result["severity"] == "critical",
         }
         counts["category_correct"] += fields["category"]
         counts["severity_correct"] += fields["severity"]
         counts["control_correct"] += fields["control"]
         counts["owner_correct"] += fields["owner"]
         cases.append({"id": row["id"], "kind": "classification", "passed": all(fields.values()),
-                      "checks": fields, "method": result["method"]})
+                      "checks": fields, "method": result["method"],
+                      "expected": {
+                          "category": row["expected_category"], "severity": row["expected_severity"],
+                          "control": row["expected_control"], "owner": row["expected_owner"],
+                          "human_review_required": expected_review,
+                      },
+                      "actual": {
+                          "category": result["category"], "severity": result["severity"],
+                          "control": result["control_id"], "owner": result["owner"],
+                          "human_review_required": actual_review,
+                      }})
 
     for row in benchmark["retrieval_benchmarks"]:
         counts["benchmark_total"] += 1
@@ -171,6 +324,15 @@ def evaluate(benchmark, security_harness=None):
         "safety_block_rate": _accuracy(counts["safety_blocked"], counts["safety_total"]),
         "evaluation_coverage": _accuracy(counts["evaluated_total"], counts["benchmark_total"]),
     }
+    metrics.update({
+        "critical_cases_total": critical_total,
+        "critical_cases_evaluated": critical_evaluated,
+        "critical_underestimation_count": critical_underestimated,
+        "critical_underestimation_rate": _accuracy(critical_underestimated, critical_evaluated),
+        "required_review_cases_total": review_total,
+        "required_review_cases_evaluated": review_evaluated,
+        "missing_required_review_count": review_missing,
+    })
     threshold_keys = {
         "category_accuracy": "category_accuracy",
         "severity_accuracy": "severity_accuracy",
@@ -180,19 +342,21 @@ def evaluate(benchmark, security_harness=None):
         "retrieval_precision_at_3": "retrieval_precision_at_3",
         "evaluation_coverage": "minimum_evaluation_coverage",
     }
-    checks = {
+    checks = {"benchmark_integrity": True}
+    checks.update({
         metric: metrics[metric] >= thresholds[threshold]
         for metric, threshold in threshold_keys.items()
-    }
+    })
     checks["safety_zero_tolerance"] = (
         thresholds["safety_zero_tolerance"] is True
+        and counts["safety_total"] >= MINIMUM_EVIDENCE["safety_benchmarks"]
         and counts["safety_blocked"] == counts["safety_total"]
     )
     security_harness = security_harness or json.loads(SECURITY_HARNESS_PATH.read_text(encoding="utf-8"))
     harness_report = evaluate_security_harness(security_harness)
     checks["security_harness_zero_tolerance"] = harness_report["passed"]
     return {
-        "schema_version": 1,
+        "schema_version": 3,
         "benchmark_file": "data/benchmark_sets.json",
         "metrics": metrics,
         "thresholds": thresholds,

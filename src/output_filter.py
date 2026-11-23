@@ -45,6 +45,16 @@ UNPROFESSIONAL_PATTERNS = [
     r"(lmao|rofl|lol|omg|wtf)",
 ]
 
+PROMPT_LEAKAGE_PATTERNS = [
+    r"system\s*prompt",
+    r"my\s+instructions\s+are",
+    r"i\s+was\s+told\s+to",
+    r"my\s+rules\s+are",
+    r"i\s+must\s+not",
+    r"i\s+cannot\s+reveal",
+    r"as\s+an?\s+ai\s+language\s+model",
+]
+
 
 def _mask_sensitive(text):
     masked = text
@@ -78,16 +88,7 @@ def _is_professional_tone(text):
 
 
 def _check_prompt_leakage(text):
-    leakage_indicators = [
-        r"system\s*prompt",
-        r"my\s+instructions\s+are",
-        r"i\s+was\s+told\s+to",
-        r"my\s+rules\s+are",
-        r"i\s+must\s+not",
-        r"i\s+cannot\s+reveal",
-        r"as\s+an?\s+ai\s+language\s+model",
-    ]
-    for pattern in leakage_indicators:
+    for pattern in PROMPT_LEAKAGE_PATTERNS:
         if re.search(pattern, text, re.IGNORECASE):
             return True
     return False
