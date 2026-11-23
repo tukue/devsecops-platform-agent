@@ -141,7 +141,7 @@ Build three benchmark sets:
 
 1. AWS regression cases to preserve current behavior.
 2. Equivalent AWS, Azure, and GCP findings to verify taxonomy parity.
-3. Ambiguous, malformed, adversarial, and prompt-injection cases to verify safe
+3. Ambiguous, malformed, and prompt-injection cases to verify safe
    refusal and human-review routing.
 
 ### Metrics

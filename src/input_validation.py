@@ -13,7 +13,7 @@ _request_log = defaultdict(list)
 _rate_limit_lock = threading.Lock()
 
 # ──────────────────────────────────────────────
-# Layer 0: Adversarial Encoding Normalization
+# Layer 0: Prompt-Injection Encoding Normalization
 # Strips characters attackers use to evade the regex layers below while
 # leaving ordinary findings byte-identical after normalization.
 # ──────────────────────────────────────────────
@@ -62,7 +62,7 @@ def contains_evasion_chars(text):
 
 
 def normalize_for_detection(text):
-    """Fold adversarial encodings so detection layers see the real payload.
+    """Fold encoded prompt-injection attempts so detection layers see the real payload.
 
     NFKC collapses fullwidth forms (ｓｙｓｔｅｍ: -> system:), invisible
     characters are removed, homoglyphs are folded to ASCII, and combining

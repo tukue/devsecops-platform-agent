@@ -152,14 +152,14 @@ def _safe_case_id(row, kind, passed, **details):
 
 
 def evaluate_security_harness(harness):
-    """Evaluate adversarial, leakage, output, parity, and review-boundary cases."""
+    """Evaluate prompt injection, leakage, output, parity, and review-boundary cases."""
     if harness.get("schema_version") != "1.0":
         raise ValueError("Unsupported security harness schema version.")
 
     cases = []
-    for row in harness["input_adversarial_cases"]:
+    for row in harness["prompt_injection_cases"]:
         accepted, _, _ = validate_input(row["input"], client_id="security-harness-" + row["id"])
-        cases.append(_safe_case_id(row, "input_adversarial", not accepted,
+        cases.append(_safe_case_id(row, "prompt_injection", not accepted,
                                   expected_block=row["expected_block"]))
 
     for row in harness["redaction_cases"]:

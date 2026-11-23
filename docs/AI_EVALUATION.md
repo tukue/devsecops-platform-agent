@@ -38,7 +38,7 @@ and does not download model weights. Cases that require the zero-shot model are
 not silently substituted with model results; add a separate evaluation job with
 pinned model revisions, fixed runtime settings, and its own thresholds before
 using such cases as release evidence. Keep evaluation examples expert-labeled,
-include positive, ambiguous, malformed, and adversarial inputs, and preserve a
+include positive, ambiguous, malformed, and prompt-injection inputs, and preserve a
 held-out set for release evaluation to reduce benchmark overfitting.
 
 ## Increment 1: consequential classification errors

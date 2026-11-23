@@ -36,10 +36,10 @@ def test_evaluation_benchmark_passes_all_release_thresholds():
     assert low_confidence["observed_confidence"] == 0.45
 
 
-def test_security_harness_fails_closed_when_an_adversarial_case_is_not_blocked():
+def test_security_harness_fails_closed_when_a_prompt_injection_case_is_not_blocked():
     benchmark = load_benchmark()
     harness = load_security_harness()
-    harness["input_adversarial_cases"][0]["input"] = "A routine security group finding."
+    harness["prompt_injection_cases"][0]["input"] = "A routine security group finding."
 
     report = evaluate(benchmark, harness)
 

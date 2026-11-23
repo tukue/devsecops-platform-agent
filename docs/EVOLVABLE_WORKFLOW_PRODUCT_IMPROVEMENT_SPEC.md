@@ -140,7 +140,7 @@ Scanner, CI, or manual finding
 
 ### Scope
 
-- Maintain expert-labeled AWS regression, adversarial, malformed, ambiguous,
+- Maintain expert-labeled AWS regression, prompt-injection, malformed, ambiguous,
   and cross-source parity benchmark sets.
 - Score classification, severity, owner routing, retrieval, remediation quality,
   safety, and confidence calibration.

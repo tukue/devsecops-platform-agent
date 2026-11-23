@@ -187,7 +187,7 @@ confirm sensitive payloads are excluded.
 
 ### Improvement 17 — Build expert evaluation harness
 
-- Create labeled AWS regression, cross-source parity, adversarial, malformed,
+- Create labeled AWS regression, cross-source parity, prompt-injection, malformed,
   benign, and ambiguous evaluation datasets.
 - Calculate control macro F1, severity agreement, owner accuracy, Recall@K,
   Precision@K, safe-and-correct rate, and confidence calibration.
